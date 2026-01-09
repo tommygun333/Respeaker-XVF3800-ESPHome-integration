@@ -93,8 +93,13 @@ esp32:
 wifi:
   id: wifi_id
   fast_connect: ${hidden_ssid}
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  ssid: "Tomas_NET"
+  password: "Katastrofa123"
+  
+  manual_ip:
+    static_ip: 192.168.0.29  # Replace with actual IP from router
+    gateway: 192.168.1.1       # Usually your router IP
+    subnet:  255.255.255.0
   # Add power management and connection optimizations
   power_save_mode: none  # Disable power saving for better performance
   reboot_timeout: 10min  # Prevent unnecessary reboots
@@ -108,14 +113,15 @@ network:
   enable_ipv6: true
 
 logger:
-  level: INFO
-  initial_level: INFO
+  level: DEBUG
+  initial_level: DEBUG
   logs:
     sensor: WARN
-    voice_assistant: INFO
+    voice_assistant: DEBUG
     micro_wake_word: INFO
     i2s_audio: WARN
     respeaker_xvf3800: INFO
+    media_player: DEBUG
 
 api:
   id: api_id
@@ -171,7 +177,7 @@ http_request:
 ota:
   - platform: esphome
     id: ota_esphome
-    password: !secret ota_password
+    password: "12345678"
 
 i2c:
   - id: internal_i2c
@@ -274,6 +280,15 @@ globals:
     type: float
     restore_value: no
     initial_value: '0.0'
+  
+  - id: is_tts_playing
+    type:  bool
+    restore_value: no
+    initial_value: 'false'
+  - id: is_any_audio_playing
+    type:  bool
+    restore_value: no
+    initial_value: 'false'
 
 # Time sync from Home Assistant
 time:
@@ -346,7 +361,7 @@ switch:
       # If 15 minutes have passed and the timer is still ringing, stop it.
       - delay: 15min
       - switch.turn_off: timer_ringing
-  # Defines if alarm is active
+  
   - platform: template
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
@@ -357,8 +372,37 @@ switch:
       - script.execute: control_leds
     on_turn_off:
       - script.execute: control_leds
+  
+  - platform: template
+    name: "Amplifier Enable"
+    id: amplifier_enable
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: false
+    turn_on_action:
+      then: 
+        - lambda: |-
+            uint8_t payload[] = {20, 1, 2, 31, 0};
+            id(respeaker).write(payload, sizeof(payload));
+            ESP_LOGI("amplifier", "Amplifier ENABLED");
+    turn_off_action: 
+      then:
+        - lambda: |-
+            uint8_t payload[] = {20, 1, 2, 31, 1};
+            id(respeaker).write(payload, sizeof(payload));
+            ESP_LOGI("amplifier", "Amplifier DISABLED (no hum)");  
 
+    
 binary_sensor:
+  - platform: template
+    name: "Satellite Actually Responding"
+    id: satellite_responding
+    device_class: sound
+
+  - platform: template
+    name: "Satellite Active"
+    id:  satellite_active
+    device_class: running
 
 number:
   - platform: template
@@ -770,7 +814,7 @@ script:
   # For the sake of simplicity and re-usability, the script calls child scripts defined below.
   # This script will be called every time one of these conditions is changing.
   - id: control_leds
-    mode: single  # Prevent multiple simultaneous executions
+    mode: single
     then:
       - lambda: |
           // Cache expensive component checks
@@ -782,6 +826,7 @@ script:
           static bool last_timer_active = false;
           static bool last_improv_ble = false;
           static bool last_init_progress = false;
+          static bool last_tts_playing = false;
 
           bool respeaker_failed = id(respeaker).is_failed();
           bool wifi_connected = id(wifi_id).is_connected();
@@ -790,6 +835,7 @@ script:
           bool new_timer_ringing = id(timer_ringing).state;
           bool improv_ble = id(improv_ble_in_progress);
           bool init_progress = id(init_in_progress);
+          bool tts_playing = id(is_tts_playing);
 
           // Only update if something actually changed
           bool needs_update = (
@@ -799,10 +845,11 @@ script:
             voice_phase != last_voice_phase ||
             new_timer_ringing != last_timer_ringing ||
             improv_ble != last_improv_ble ||
-            init_progress != last_init_progress
+            init_progress != last_init_progress ||
+            tts_playing != last_tts_playing
           );
 
-          if (!needs_update) return;
+          if (! needs_update) return;
 
           // Update cache
           last_respeaker_failed = respeaker_failed;
@@ -812,6 +859,10 @@ script:
           last_timer_ringing = new_timer_ringing;
           last_improv_ble = improv_ble;
           last_init_progress = init_progress;
+          last_tts_playing = tts_playing;
+
+          ESP_LOGD("leds", "🎨 LED Control | Phase: %d | TTS: %d | Audio: %d | Timer:  %d", 
+                   voice_phase, tts_playing, id(is_any_audio_playing), new_timer_ringing);
 
           if (respeaker_failed) {
             id(control_leds_respeaker_startup_failed).execute();
@@ -824,12 +875,27 @@ script:
             id(fetch_first_active_timer).execute();
           }
 
-          // Continue with existing logic...
+          // NEW: Handle TTS and phase synchronization
+          // If TTS is playing but phase is idle, keep replying LEDs
+          if (tts_playing && voice_phase == ${voice_assist_idle_phase_id}) {
+            ESP_LOGD("leds", "🎨 LED Override: TTS playing, forcing REPLYING phase");
+            voice_phase = ${voice_assist_replying_phase_id};
+          }
+          
+          // NEW: If phase is replying but TTS is NOT playing, force to idle
+          // This fixes the stuck LEDs bug! 
+          if (! tts_playing && voice_phase == ${voice_assist_replying_phase_id}) {
+            ESP_LOGD("leds", "🎨 LED Fix: Phase is REPLYING but TTS stopped, forcing IDLE");
+            voice_phase = ${voice_assist_idle_phase_id};
+            id(voice_assistant_phase) = ${voice_assist_idle_phase_id};  // Update the actual phase
+          }
+
+          // Continue with existing logic... 
           if (improv_ble) {
             id(control_leds_improv_ble_state).execute();
           } else if (init_progress) {
             id(control_leds_init_state).execute();
-          } else if (!wifi_connected || !api_connected){
+          } else if (! wifi_connected || !api_connected){
             id(control_leds_no_ha_connection_state).execute();
           } else if (new_timer_ringing) {
             id(control_leds_timer_ringing).execute();
@@ -850,6 +916,7 @@ script:
           } else if (voice_phase == ${voice_assist_idle_phase_id}) {
             id(control_leds_voice_assistant_idle_phase).execute();
           }
+      - script.execute: update_satellite_sensors
 
   # Script executed if respeaker startup failed
   - id: control_leds_respeaker_startup_failed
@@ -1214,6 +1281,36 @@ script:
             id(current_time).publish_state(current_time_string);
             last_time_string = current_time_string;
           }
+  - id: auto_disable_amplifier
+    mode:  restart
+    then:
+      - delay: 2s
+      - if:
+          condition:
+            lambda: 'return ! id(is_any_audio_playing);'
+          then:
+            - switch.turn_off: amplifier_enable
+            - logger.log: "Auto-disabled amplifier - no audio playing"
+  - id: update_satellite_sensors
+    mode: restart
+    then:
+      - lambda: |-
+          // Update "Satellite Actually Responding" sensor
+          bool responding = id(is_tts_playing) || 
+                           (id(voice_assistant_phase) == ${voice_assist_replying_phase_id});
+          id(satellite_responding).publish_state(responding);
+          
+          // Update "Satellite Active" sensor
+          int phase = id(voice_assistant_phase);
+          bool active = phase == ${voice_assist_waiting_for_command_phase_id} ||
+                       phase == ${voice_assist_listening_for_command_phase_id} ||
+                       phase == ${voice_assist_thinking_phase_id} ||
+                       phase == ${voice_assist_replying_phase_id} ||
+                       id(is_tts_playing);
+          id(satellite_active).publish_state(active);
+          
+          ESP_LOGD("sensors", "📊 Sensors updated | Responding: %d | Active: %d", responding, active);
+
 
 i2s_audio:
   - id: i2s_output
@@ -1322,53 +1419,110 @@ media_player:
     name: Media Player
     announcement_speaker: announcement_resampling_speaker
     media_speaker: media_resampling_speaker
-    announcement_pipeline:
-      format: FLAC     # FLAC is the least processor intensive codec
-      num_channels: 1  # Stereo audio is unnecessary for announcements
+    announcement_pipeline: 
+      format: FLAC
+      num_channels: 1
       sample_rate: 48000
-    media_pipeline:
-      format: FLAC     # FLAC is the least processor intensive codec
+    media_pipeline: 
+      format:  FLAC
       num_channels: 2
       sample_rate: 48000
     volume_increment: 0.05
     volume_min: 0.0
     volume_max: 1.0
-    sources:
+    sources: 
       - file_source
       - http_source
       - sendspin_source
-    on_mute:
-      - delay: 100ms  # Debounce
+    
+    on_mute: 
+      - delay: 100ms
       - script.execute: control_leds_volume_changed
-    on_unmute:
-      - delay: 100ms  # Debounce
+    
+    on_unmute: 
+      - delay: 100ms
       - script.execute: control_leds_volume_changed
-    on_volume:
-      if:
-        condition:
+    
+    on_volume: 
+      if: 
+        condition: 
           - lambda: return !id(init_in_progress);
-        then:
-          - delay: 100ms  # Debounce
+        then: 
+          - delay: 100ms
           - script.execute: control_leds_volume_changed
+    
     on_announcement:
-      - mixer_speaker.apply_ducking:
+      - logger.log:
+          format: "📢 MP: ANNOUNCEMENT | Setting audio flag | State: %d"
+          args:  ['id(external_media_player).state']
+      - globals.set:
+          id: is_any_audio_playing
+          value:  'true'
+      - switch.turn_on: amplifier_enable
+      - logger.log:
+          format: "📢 MP: ANNOUNCEMENT | TTS: %d | Audio: %d | Amp: %d"
+          args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(amplifier_enable).state']
+      - script.execute: update_satellite_sensors  # NEW
+      - mixer_speaker.apply_ducking: 
           id: media_mixing_input
           decibel_reduction: 20
           duration: 0.0s
+    
     on_state:
-      if:
-        condition:
-          and:
-            - switch.is_off: timer_ringing
-            - not:
-                voice_assistant.is_running:
-            - not:
-                media_player.is_announcing: external_media_player
-        then:
-          - mixer_speaker.apply_ducking:
-              id: media_mixing_input
-              decibel_reduction: 0
-              duration: 1.0s
+      - logger.log:
+          format: "🔄 MP: STATE | State: %d | TTS: %d | Audio: %d"
+          args: ['id(external_media_player).state', 'id(is_tts_playing)', 'id(is_any_audio_playing)']
+      - if:
+          condition:
+            and:
+              - switch.is_off: timer_ringing
+              - not: 
+                  voice_assistant.is_running:  {}
+              - not:
+                  media_player.is_announcing: external_media_player
+          then:
+            - mixer_speaker.apply_ducking:
+                id: media_mixing_input
+                decibel_reduction: 0
+                duration: 1.0s
+    
+    on_play:
+      - logger.log:
+          format: "▶️  MP: PLAY | Media started | State: %d"
+          args: ['id(external_media_player).state']
+      - globals.set:
+          id: is_any_audio_playing
+          value: 'true'
+      - switch.turn_on: amplifier_enable
+      - logger.log:
+          format: "▶️ MP: PLAY | TTS:  %d | Audio: %d | Amp: %d"
+          args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(amplifier_enable).state']
+    
+    on_idle:
+      - logger.log:
+          format: "⏸️ MP: IDLE | All audio finished | State: %d"
+          args:  ['id(external_media_player).state']
+      - logger.log:
+          format: "⏸️ MP:  IDLE | Before clear | TTS: %d | Audio: %d | Phase: %d"
+          args:  ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+      - globals.set:
+          id: is_tts_playing
+          value: 'false'
+      - globals.set:
+          id: is_any_audio_playing
+          value: 'false'
+      - lambda: |
+          if (id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
+            ESP_LOGD("media_player", "⏸️ MP: IDLE | Setting phase from REPLYING to IDLE");
+            id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+          }
+      - logger.log:
+          format: "⏸️ MP:  IDLE | After clear | TTS:  %d | Audio: %d | Phase: %d"
+          args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+      - script.execute: auto_disable_amplifier
+      - script.execute: update_satellite_sensors  # NEW
+      - script.execute: control_leds
+      - logger.log: "⏸️ MP:  IDLE | Completed"
 
 external_components:
   - source:
@@ -1685,6 +1839,19 @@ voice_assistant:
               priority: true
               sound_file: "error_cloud_expired"
   # When the voice assistant starts: Play a wake up sound, duck audio.
+    - logger.log:
+        format: "❌ VA: ERROR | Code: %d | TTS: %d | Audio: %d | Phase: %d"
+        args: ['code.c_str()', 'id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+    - globals.set:
+        id: is_tts_playing
+        value: 'false'
+    - globals.set:
+        id: is_any_audio_playing
+        value: 'false'
+    - script.execute: auto_disable_amplifier
+    - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+    - script.execute: control_leds
+     
   on_start:
     - mixer_speaker.apply_ducking:
         id: media_mixing_input
@@ -1693,6 +1860,10 @@ voice_assistant:
   on_listening:
     - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};
     - script.execute: control_leds
+    - logger.log:
+        format: "🎤 VA:  LISTENING | Phase: %d | TTS: %d | Audio: %d"
+        args: ['id(voice_assistant_phase)', 'id(is_tts_playing)', 'id(is_any_audio_playing)']
+    - script.execute: update_satellite_sensors
   on_stt_vad_start:
     - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};
     - script.execute: control_leds
@@ -1710,48 +1881,120 @@ voice_assistant:
           # Start a script that would potentially enable the stop word if the response is longer than a second
           - script.execute: activate_stop_word_once
   on_tts_start:
+    - logger.log:
+        format: "🔊 VA:  TTS_START | Setting flags | Phase: %d"
+        args: ['id(voice_assistant_phase)']
+    - globals.set:
+        id: is_tts_playing
+        value: 'true'
+    - globals.set:
+        id: is_any_audio_playing
+        value: 'true'
+    - switch.turn_on: amplifier_enable
+    - logger.log:
+        format: "🔊 VA: TTS_START | Flags set | TTS: %d | Audio: %d | Amp: %d"
+        args:  ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(amplifier_enable).state']
+    - script.execute: update_satellite_sensors  # NEW
     - if:
         condition:
-          # The intent_progress trigger didn't start the TTS Reponse
           lambda: 'return id(voice_assistant_phase) != ${voice_assist_replying_phase_id};'
         then:
           - lambda: id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
           - script.execute: control_leds
-          # Start a script that would potentially enable the stop word if the response is longer than a second
           - script.execute: activate_stop_word_once
+  
   on_tts_end:
+    - logger.log:
+        format: "🔊 VA: TTS_END | TTS data sent | TTS: %d | Audio: %d | Phase: %d"
+        args:  ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
     - script.execute:
         id: send_tts_uri_event
-        tts_uri: !lambda 'return x;'
+        tts_uri:  !lambda 'return x;'
+    # NEW: Add logging (but don't clear flags - let media_player handle it)
+    - logger.log: "TTS data sent (speaker may still be playing)"
+  
   on_stt_end:
+    # EXISTING: Keep as-is
+    - logger.log:
+        format: "📝 VA: STT_END | Text: '%s' | Phase: %d"
+        args: ['x.c_str()', 'id(voice_assistant_phase)']
     - script.execute:
         id: send_stt_text_event
         stt_text: !lambda 'return x;'
 
-  # When the voice assistant ends ...
+  # When the voice assistant ends ... 
   on_end:
+    - logger.log: 
+        format: "🏁 VA: END | Before wait | TTS: %d | Audio: %d | Phase: %d"
+        args:  ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
     - wait_until:
-        not:
-          voice_assistant.is_running:
-    # Stop ducking audio.
-    - mixer_speaker.apply_ducking:
+        not:  
+          voice_assistant.is_running: 
+    - logger.log: "🏁 VA: END | After wait_until"
+    - mixer_speaker.apply_ducking: 
         id: media_mixing_input
         decibel_reduction: 0
         duration: 1.0s
-    # If the end happened because of an error, let the error phase on for a second
+    - if:
+        condition: 
+          lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
+        then:  
+          - delay: 1s
+    - lambda: |
+        if (! id(is_tts_playing)) {
+          ESP_LOGD("voice_assistant", "🏁 VA: END | No TTS playing, going to idle");
+          id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+        } else {
+          ESP_LOGD("voice_assistant", "🏁 VA: END | TTS flag still set, waiting for media player");
+        }
+    - script.execute: control_leds
+    - logger.log:
+        format: "🏁 VA: END | After control_leds | TTS:   %d | Audio: %d | Phase: %d"
+        args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+    
+    # MODIFIED: Check if media player is actually idle before clearing flags
+    - delay: 5s  # Increased from 3s to give media player more time
+    - logger.log:
+        format: "⏰ VA: END | 5s timeout check | TTS: %d | Audio: %d | Phase:  %d | MP State: %d"
+        args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)', 'id(external_media_player).state']
+    - if: 
+        condition:
+          lambda: |
+            // Only clear if TTS flag is stuck AND media player is actually idle
+            return id(is_tts_playing) && 
+                   (id(external_media_player).state == media_player:: MEDIA_PLAYER_STATE_IDLE);
+        then:
+          - logger.log:
+              format: "⚠️ SAFETY: Media player idle but TTS flags stuck - clearing!"
+              args: []
+          - globals.set:
+              id: is_tts_playing
+              value: 'false'
+          - globals.set:
+              id: is_any_audio_playing
+              value:  'false'
+          - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+          - script.execute: control_leds
+          - script.execute: auto_disable_amplifier
     - if:
         condition:
-          lambda: return id(voice_assistant_phase) == ${voice_assist_error_phase_id};
+          lambda: |
+            // Log if media player is still playing (expected behavior)
+            return id(is_tts_playing) && 
+                   (id(external_media_player).state != media_player::MEDIA_PLAYER_STATE_IDLE);
         then:
-          - delay: 1s
-    # Reset the voice assistant phase id and reset the LED animations.
-    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
-    - script.execute: control_leds
+          - logger.log:
+              format: "✅ SAFETY: Media player still active (State: %d) - flags OK"
+              args: ['id(external_media_player).state']
+  
+  
   on_timer_finished:
     - switch.turn_on: timer_ringing
     - lambda: |
         id(next_timer).publish_state(-1);
         id(next_timer_name).publish_state("-");
+  
+  # ...  rest of your timer handlers stay the same ...
   on_timer_started:
     - lambda: |
         id(check_if_timers_active).execute();
@@ -1761,6 +2004,7 @@ voice_assistant:
           id(next_timer_name).publish_state(id(first_active_timer).name);
         }
     - script.execute: control_leds
+  
   on_timer_cancelled:
     - lambda: |
         id(check_if_timers_active).execute();
@@ -1773,7 +2017,8 @@ voice_assistant:
           id(next_timer_name).publish_state("-");
         }
     - script.execute: control_leds
-  on_timer_updated:
+  
+  on_timer_updated: 
     - lambda: |
         id(check_if_timers_active).execute();
         if (id(is_timer_active)) {
@@ -1782,7 +2027,8 @@ voice_assistant:
           id(next_timer_name).publish_state(id(first_active_timer).name);
         }
     - script.execute: control_leds
-  on_timer_tick:
+  
+  on_timer_tick: 
     # Reduce LED updates - only every 5 seconds instead of every second
     - lambda: |
         id(fetch_first_active_timer).execute();
@@ -1806,6 +2052,7 @@ button:
     entity_category: config
     disabled_by_default: true
     icon: "mdi:restart"
-
+  
+     
 debug:
   update_interval: 5s
