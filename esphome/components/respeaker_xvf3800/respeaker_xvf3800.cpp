@@ -500,36 +500,265 @@ std::string RespeakerXVF3800::read_dfu_version() {
 // =========================================================================
 
 void RespeakerXVF3800::configure_dsp_() {
-  ESP_LOGI(TAG, "Configuring XVF3800 DSP for optimal noise suppression...");
+  ESP_LOGI(TAG, "Configuring XVF3800 DSP with default voice-optimized settings...");
 
-  // Enable interference tracker (IT_ADAPT_CTRL = 1 means on)
-  uint8_t it_on = 1;
-  this->xmos_write_bytes(IT_SERVICER_RESID, IT_ADAPT_CTRL_CMD, &it_on, 1);
-  ESP_LOGD(TAG, "Interference tracker enabled");
+  // Enable AGC (PP_RESID=17, CMD=10)
+  int32_t agc_on = 1;
+  uint8_t agc_on_buf[4];
+  memcpy(agc_on_buf, &agc_on, 4);
+  this->xmos_write_bytes(PP_RESID, PP_AGCONOFF_CMD, agc_on_buf, 4);
+  ESP_LOGD(TAG, "AGC enabled");
 
-  // Set noise suppression to High (level 3)
-  uint8_t ns_level = 3;
-  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &ns_level, 1);
-  ESP_LOGD(TAG, "Noise suppression set to High (level 3)");
+  // Set stationary noise suppression gain-floor to 0.1 (PP_MIN_NS)
+  float ns_floor = 0.1f;
+  uint8_t ns_buf[4];
+  memcpy(ns_buf, &ns_floor, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NS_CMD, ns_buf, 4);
+  ESP_LOGD(TAG, "Stationary noise suppression gain-floor set to 0.1");
 
-  // Lower VNR threshold to 80 (more sensitive to voice in noise)
-  uint8_t vnr_threshold = 80;
-  this->xmos_write_bytes(VNR_SERVICER_RESID, VNR_THRESHOLD_CMD, &vnr_threshold, 1);
-  ESP_LOGD(TAG, "VNR threshold set to 80");
+  // Set non-stationary noise suppression gain-floor to 0.1 (PP_MIN_NN)
+  float nn_floor = 0.1f;
+  uint8_t nn_buf[4];
+  memcpy(nn_buf, &nn_floor, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NN_CMD, nn_buf, 4);
+  ESP_LOGD(TAG, "Non-stationary noise suppression gain-floor set to 0.1");
+
+  // Enable echo suppression
+  int32_t echo_on = 1;
+  uint8_t echo_buf[4];
+  memcpy(echo_buf, &echo_on, 4);
+  this->xmos_write_bytes(PP_RESID, PP_ECHOONOFF_CMD, echo_buf, 4);
+  ESP_LOGD(TAG, "Echo suppression enabled");
 }
 
 void RespeakerXVF3800::set_noise_suppression_level(uint8_t level) {
-  ESP_LOGI(TAG, "Setting noise suppression level to %u", level);
-  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &level, 1);
+  // Maps 0-4 levels to gain-floor values: 0=1.0(off), 1=0.5(low), 2=0.3(medium), 3=0.1(high), 4=0.0(max)
+  static const float level_map[] = {1.0f, 0.5f, 0.3f, 0.1f, 0.0f};
+  float floor_val = (level <= 4) ? level_map[level] : 0.1f;
+  ESP_LOGI(TAG, "Setting noise suppression level %u (gain-floor=%.2f)", level, floor_val);
+  uint8_t buf[4];
+  memcpy(buf, &floor_val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NS_CMD, buf, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NN_CMD, buf, 4);
 }
 
-void RespeakerXVF3800::set_interference_angle(float angle_degrees) {
-  ESP_LOGI(TAG, "Setting interference rejection angle to %.1f degrees", angle_degrees);
+// =========================================================================
+//   Fixed Beam Mode Methods
+// =========================================================================
+
+void RespeakerXVF3800::set_fixed_beams_enabled(bool enabled) {
+  ESP_LOGI(TAG, "Fixed beams: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMSONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_fixed_beam_azimuths(float beam1_degrees, float beam2_degrees) {
   static constexpr float PI_F = 3.14159265358979323846f;
-  float radians = angle_degrees * PI_F / 180.0f;
-  uint8_t value[4];
-  memcpy(value, &radians, sizeof(float));
-  this->xmos_write_bytes(BEAM_SERVICER_RESID, BEAM_DIRECTION_CMD, value, 4);
+  float rad1 = beam1_degrees * PI_F / 180.0f;
+  float rad2 = beam2_degrees * PI_F / 180.0f;
+  ESP_LOGI(TAG, "Fixed beam azimuths: %.1f° (%.3f rad), %.1f° (%.3f rad)", beam1_degrees, rad1, beam2_degrees, rad2);
+  uint8_t buf[8];
+  memcpy(buf, &rad1, 4);
+  memcpy(buf + 4, &rad2, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMSAZIMUTH_CMD, buf, 8);
+}
+
+void RespeakerXVF3800::set_fixed_beam_gating(bool enabled) {
+  ESP_LOGI(TAG, "Fixed beam gating: %s", enabled ? "ON" : "OFF");
+  uint8_t val = enabled ? 1 : 0;
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMSGATING_CMD, &val, 1);
+}
+
+void RespeakerXVF3800::set_fixed_beam_noise_threshold(float beam1_thr, float beam2_thr) {
+  ESP_LOGI(TAG, "Fixed beam noise thresholds: beam1=%.2f, beam2=%.2f", beam1_thr, beam2_thr);
+  uint8_t buf[8];
+  memcpy(buf, &beam1_thr, 4);
+  memcpy(buf + 4, &beam2_thr, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMNOISETHR_CMD, buf, 8);
+}
+
+// =========================================================================
+//   AEC Tuning Methods
+// =========================================================================
+
+void RespeakerXVF3800::set_hpf_mode(uint8_t mode) {
+  ESP_LOGI(TAG, "HPF mode: %u", mode);
+  int32_t val = (int32_t) mode;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_HPFONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_aec_emphasis(uint8_t mode) {
+  ESP_LOGI(TAG, "AEC emphasis: %u", mode);
+  int32_t val = (int32_t) mode;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_AECEMPHASISONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_far_end_gain(float gain_db) {
+  ESP_LOGI(TAG, "Far-end gain: %.2f dB", gain_db);
+  uint8_t buf[4];
+  memcpy(buf, &gain_db, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FAR_EXTGAIN_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_asr_output(bool enabled) {
+  ESP_LOGI(TAG, "ASR output: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_ASROUTONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_asr_output_gain(float gain) {
+  ESP_LOGI(TAG, "ASR output gain: %.2f", gain);
+  uint8_t buf[4];
+  memcpy(buf, &gain, 4);
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_ASROUTGAIN_CMD, buf, 4);
+}
+
+// =========================================================================
+//   Post-Processing Methods
+// =========================================================================
+
+void RespeakerXVF3800::set_agc_enabled(bool enabled) {
+  ESP_LOGI(TAG, "AGC: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_AGCONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_agc_max_gain(float gain) {
+  ESP_LOGI(TAG, "AGC max gain: %.2f", gain);
+  uint8_t buf[4];
+  memcpy(buf, &gain, 4);
+  this->xmos_write_bytes(PP_RESID, PP_AGCMAXGAIN_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_agc_desired_level(float level) {
+  ESP_LOGI(TAG, "AGC desired level: %.4f", level);
+  uint8_t buf[4];
+  memcpy(buf, &level, 4);
+  this->xmos_write_bytes(PP_RESID, PP_AGCDESIREDLEVEL_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_pp_limiter(bool enabled) {
+  ESP_LOGI(TAG, "PP limiter: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_LIMITONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_pp_limiter_level(float level) {
+  ESP_LOGI(TAG, "PP limiter power: %.4f", level);
+  uint8_t buf[4];
+  memcpy(buf, &level, 4);
+  this->xmos_write_bytes(PP_RESID, PP_LIMITPLIMIT_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_ns_gain_floor(float value) {
+  ESP_LOGI(TAG, "Stationary NS gain-floor: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NS_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_nn_gain_floor(float value) {
+  ESP_LOGI(TAG, "Non-stationary NS gain-floor: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_MIN_NN_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_echo_suppression(bool enabled) {
+  ESP_LOGI(TAG, "Echo suppression: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_ECHOONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_echo_gamma_e(float value) {
+  ESP_LOGI(TAG, "Echo gamma E: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_GAMMA_E_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_echo_gamma_etail(float value) {
+  ESP_LOGI(TAG, "Echo gamma E-tail: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_GAMMA_ETAIL_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_echo_gamma_enl(float value) {
+  ESP_LOGI(TAG, "Echo gamma ENL: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_GAMMA_ENL_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_nl_attenuation(bool enabled) {
+  ESP_LOGI(TAG, "NL echo attenuation: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_NLATTENONOFF_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_dt_sensitive(uint8_t value) {
+  ESP_LOGI(TAG, "Doubletalk sensitivity: %u", value);
+  int32_t val = (int32_t) value;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_DTSENSITIVE_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_attns_mode(bool enabled) {
+  ESP_LOGI(TAG, "Non-speech attenuation mode: %s", enabled ? "ON" : "OFF");
+  int32_t val = enabled ? 1 : 0;
+  uint8_t buf[4];
+  memcpy(buf, &val, 4);
+  this->xmos_write_bytes(PP_RESID, PP_ATTNS_MODE_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_attns_nominal(float value) {
+  ESP_LOGI(TAG, "Non-speech attenuation level: %.2f", value);
+  uint8_t buf[4];
+  memcpy(buf, &value, 4);
+  this->xmos_write_bytes(PP_RESID, PP_ATTNS_NOMINAL_CMD, buf, 4);
+}
+
+// =========================================================================
+//   Audio Manager Methods
+// =========================================================================
+
+void RespeakerXVF3800::set_mic_gain(float gain) {
+  ESP_LOGI(TAG, "Mic gain: %.2f", gain);
+  uint8_t buf[4];
+  memcpy(buf, &gain, 4);
+  this->xmos_write_bytes(AUDIO_MGR_RESID, AUDIO_MGR_MIC_GAIN_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_ref_gain(float gain) {
+  ESP_LOGI(TAG, "Reference gain: %.2f", gain);
+  uint8_t buf[4];
+  memcpy(buf, &gain, 4);
+  this->xmos_write_bytes(AUDIO_MGR_RESID, AUDIO_MGR_REF_GAIN_CMD, buf, 4);
+}
+
+void RespeakerXVF3800::set_sys_delay(int32_t samples) {
+  ESP_LOGI(TAG, "System delay: %d samples", samples);
+  uint8_t buf[4];
+  memcpy(buf, &samples, 4);
+  this->xmos_write_bytes(AUDIO_MGR_RESID, AUDIO_MGR_SYS_DELAY_CMD, buf, 4);
 }
 
 // =========================================================================
