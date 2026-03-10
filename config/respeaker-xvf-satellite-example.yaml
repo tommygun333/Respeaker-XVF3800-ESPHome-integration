@@ -2044,7 +2044,7 @@ micro_wake_word:
   id: mww
   microphone:
     microphone: i2s_mics
-    channels: 1
+    channels: 0  # DSP-processed output: beamformed, noise-suppressed, AEC-applied by XVF3800
     # gain_factor: 4
   stop_after_detection: false
   models:
