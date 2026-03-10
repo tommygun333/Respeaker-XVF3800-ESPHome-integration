@@ -2051,8 +2051,6 @@ micro_wake_word:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
       # probability_cutoff: 0.8
       id: okay_nabu
-    - model: https://raw.githubusercontent.com/formatBCE/Respeaker-Lite-ESPHome-integration/refs/heads/main/microwakeword/models/v2/kenobi.json
-      id: kenobi
     - model: hey_jarvis
       id: hey_jarvis
     - model: hey_mycroft
