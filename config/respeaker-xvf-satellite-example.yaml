@@ -396,6 +396,128 @@ switch:
             id(respeaker).write(payload, sizeof(payload));
             ESP_LOGI("amplifier", "Amplifier DISABLED (no hum)");  
 
+  # ── XVF3800 DSP Switches ──
+  - platform: template
+    id: fixed_beams_enabled
+    name: "Fixed Beams"
+    icon: mdi:target
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beams_enabled(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beams_enabled(false);
+  - platform: template
+    id: fixed_beam_gating
+    name: "Fixed Beam Gating"
+    icon: mdi:gate
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beam_gating(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beam_gating(false);
+  - platform: template
+    id: asr_output_switch
+    name: "ASR Output"
+    icon: mdi:account-voice
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_asr_output(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_asr_output(false);
+  - platform: template
+    id: agc_switch
+    name: "AGC"
+    icon: mdi:knob
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_agc_enabled(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_agc_enabled(false);
+  - platform: template
+    id: pp_limiter_switch
+    name: "Output Limiter"
+    icon: mdi:volume-high
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_pp_limiter(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_pp_limiter(false);
+  - platform: template
+    id: echo_suppression_switch
+    name: "Echo Suppression"
+    icon: mdi:echo-off
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_echo_suppression(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_echo_suppression(false);
+  - platform: template
+    id: nl_attenuation_switch
+    name: "NL Echo Attenuation"
+    icon: mdi:volume-minus
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_nl_attenuation(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_nl_attenuation(false);
+  - platform: template
+    id: attns_mode_switch
+    name: "Non-Speech Attenuation"
+    icon: mdi:account-off
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_attns_mode(true);
+    turn_off_action:
+      then:
+        - lambda: |-
+            id(respeaker).set_attns_mode(false);
+
     
 binary_sensor:
   - platform: template
@@ -434,10 +556,271 @@ number:
     initial_value: 180
     mode: slider
     unit_of_measurement: "°"
+    internal: true  # Deprecated — replaced by Fixed Beam controls below
+  # ── Fixed Beam Angle Controls ──
+  - platform: template
+    id: fixed_beam1_angle
+    name: "Fixed Beam 1 Angle"
+    icon: mdi:navigation
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 360
+    step: 5
+    initial_value: 0
+    mode: slider
+    unit_of_measurement: "°"
     on_value:
       then:
         - lambda: |-
-            id(respeaker).set_interference_angle(x);
+            id(respeaker).set_fixed_beam_azimuths(x, id(fixed_beam2_angle).state);
+  - platform: template
+    id: fixed_beam2_angle
+    name: "Fixed Beam 2 Angle"
+    icon: mdi:navigation
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 360
+    step: 5
+    initial_value: 180
+    mode: slider
+    unit_of_measurement: "°"
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beam_azimuths(id(fixed_beam1_angle).state, x);
+  - platform: template
+    id: fixed_beam_noise_threshold
+    name: "Fixed Beam Noise Threshold"
+    icon: mdi:tune
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.05
+    initial_value: 0.5
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_fixed_beam_noise_threshold(x, x);
+  # ── AEC / ASR Tuning ──
+  - platform: template
+    id: asr_output_gain
+    name: "ASR Output Gain"
+    icon: mdi:amplifier
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 100.0
+    step: 0.5
+    initial_value: 1.0
+    mode: box
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_asr_output_gain(x);
+  - platform: template
+    id: mic_gain
+    name: "Mic Gain"
+    icon: mdi:microphone
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 200.0
+    step: 1.0
+    initial_value: 90.0
+    mode: box
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_mic_gain(x);
+  - platform: template
+    id: ref_gain
+    name: "Reference Gain"
+    icon: mdi:tune-vertical
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 200.0
+    step: 0.5
+    initial_value: 8.0
+    mode: box
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_ref_gain(x);
+  - platform: template
+    id: sys_delay
+    name: "System Delay"
+    icon: mdi:timer-sand
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 12
+    mode: box
+    unit_of_measurement: "samples"
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_sys_delay((int32_t)x);
+  # ── Post-Processing / AGC ──
+  - platform: template
+    id: agc_max_gain
+    name: "AGC Max Gain"
+    icon: mdi:gain
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 1.0
+    max_value: 1000.0
+    step: 1.0
+    initial_value: 64.0
+    mode: box
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_agc_max_gain(x);
+  - platform: template
+    id: agc_desired_level
+    name: "AGC Desired Level"
+    icon: mdi:volume-equal
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.01
+    initial_value: 0.1
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_agc_desired_level(x);
+  - platform: template
+    id: pp_limiter_power
+    name: "Limiter Power"
+    icon: mdi:volume-minus
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.01
+    initial_value: 0.5
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_pp_limiter_level(x);
+  # ── Noise Suppression Fine-Tuning ──
+  - platform: template
+    id: ns_gain_floor
+    name: "Stationary Noise Suppression"
+    icon: mdi:waveform
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.01
+    initial_value: 0.1
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_ns_gain_floor(x);
+  - platform: template
+    id: nn_gain_floor
+    name: "Non-Stationary Noise Suppression"
+    icon: mdi:waveform
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.01
+    initial_value: 0.1
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_nn_gain_floor(x);
+  # ── Echo Suppression ──
+  - platform: template
+    id: echo_gamma_e
+    name: "Echo Gamma E"
+    icon: mdi:sine-wave
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 2.0
+    step: 0.1
+    initial_value: 1.0
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_echo_gamma_e(x);
+  - platform: template
+    id: echo_gamma_etail
+    name: "Echo Gamma E Tail"
+    icon: mdi:sine-wave
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 2.0
+    step: 0.1
+    initial_value: 1.0
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_echo_gamma_etail(x);
+  - platform: template
+    id: echo_gamma_enl
+    name: "Echo Gamma ENL"
+    icon: mdi:sine-wave
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 5.0
+    step: 0.1
+    initial_value: 1.0
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_echo_gamma_enl(x);
+  - platform: template
+    id: attns_nominal
+    name: "Non-Speech Attenuation Level"
+    icon: mdi:volume-off
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.05
+    initial_value: 0.5
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_attns_nominal(x);
 
 sensor:
   - platform: template
@@ -1574,7 +1957,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/tommygun333/Respeaker-XVF3800-ESPHome-integration
-      ref: main
+      ref: copilot/replace-interference-rejection-angle
     components:
       - respeaker_xvf3800
       - aic3104
@@ -1668,8 +2051,6 @@ micro_wake_word:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
       # probability_cutoff: 0.8
       id: okay_nabu
-    - model: https://raw.githubusercontent.com/formatBCE/Respeaker-Lite-ESPHome-integration/refs/heads/main/microwakeword/models/v2/kenobi.json
-      id: kenobi
     - model: hey_jarvis
       id: hey_jarvis
     - model: hey_mycroft
@@ -1845,6 +2226,73 @@ select:
             else if (x == "High") level = 3;
             else if (x == "Maximum") level = 4;
             id(respeaker).set_noise_suppression_level(level);
+  - platform: template
+    name: "High-Pass Filter"
+    id: hpf_select
+    icon: mdi:filter
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: "Off"
+    options:
+      - "Off"
+      - "70Hz"
+      - "125Hz"
+      - "150Hz"
+      - "180Hz"
+    on_value:
+      then:
+        - lambda: |-
+            uint8_t mode = 0;
+            if (x == "70Hz") mode = 1;
+            else if (x == "125Hz") mode = 2;
+            else if (x == "150Hz") mode = 3;
+            else if (x == "180Hz") mode = 4;
+            id(respeaker).set_hpf_mode(mode);
+  - platform: template
+    name: "AEC Emphasis"
+    id: aec_emphasis_select
+    icon: mdi:equalizer
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: "Off"
+    options:
+      - "Off"
+      - "On"
+      - "On+EQ"
+    on_value:
+      then:
+        - lambda: |-
+            uint8_t mode = 0;
+            if (x == "On") mode = 1;
+            else if (x == "On+EQ") mode = 2;
+            id(respeaker).set_aec_emphasis(mode);
+  - platform: template
+    name: "Doubletalk Sensitivity"
+    id: dt_sensitive_select
+    icon: mdi:account-multiple
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: "3"
+    options:
+      - "0"
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "5"
+      - "10"
+      - "11"
+      - "12"
+      - "13"
+      - "14"
+      - "15"
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_dt_sensitive((uint8_t)atoi(x.c_str()));
 
 voice_assistant:
   id: va

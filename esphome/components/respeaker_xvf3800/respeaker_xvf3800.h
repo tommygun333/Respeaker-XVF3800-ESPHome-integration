@@ -42,16 +42,46 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 const uint8_t AEC_SERVICER_RESID = 33;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
 
-// DSP servicer resource IDs and command IDs for noise suppression and interference tracking.
-// These IDs are derived from the XVF3800 xvf_host command map (see xvf_extract_command_info).
-const uint8_t NS_SERVICER_RESID = 4;
-const uint8_t NS_ADAPT_CTRL_CMD = 0;    // Noise suppression adaptive control (0=off, 1=low, 2=medium, 3=high, 4=max)
-const uint8_t IT_SERVICER_RESID = 4;
-const uint8_t IT_ADAPT_CTRL_CMD = 2;    // Interference tracker adaptive control (0=off, 1=on)
-const uint8_t VNR_SERVICER_RESID = 5;
-const uint8_t VNR_THRESHOLD_CMD = 0;    // VNR threshold (lower = more sensitive to voice in noise)
-const uint8_t BEAM_SERVICER_RESID = 33; // Reuse AEC servicer for beam direction
-const uint8_t BEAM_DIRECTION_CMD = 74;  // Beam/null steering direction in radians (float, 4 bytes)
+// Fixed Beam Mode (AEC_RESID = 33) — from official respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY command map
+const uint8_t AEC_FIXEDBEAMSONOFF_CMD = 37;      // int32: 0=off, 1=on
+const uint8_t AEC_FIXEDBEAMNOISETHR_CMD = 38;    // 2x float: noise threshold per beam [0.0..1.0]
+const uint8_t AEC_FIXEDBEAMSAZIMUTH_CMD = 81;    // 2x float(radians): azimuth for beam 1, beam 2
+const uint8_t AEC_FIXEDBEAMSELEVATION_CMD = 82;  // 2x float(radians): elevation for beam 1, beam 2
+const uint8_t AEC_FIXEDBEAMSGATING_CMD = 83;     // uint8: 0=off, 1=on (speech energy selects active beam)
+
+// AEC Tuning (AEC_RESID = 33)
+const uint8_t AEC_HPFONOFF_CMD = 1;           // int32: 0=off, 1=70Hz, 2=125Hz, 3=150Hz, 4=180Hz
+const uint8_t AEC_AECEMPHASISONOFF_CMD = 4;   // int32: 0=off, 1=on, 2=on_eq
+const uint8_t AEC_FAR_EXTGAIN_CMD = 5;        // float: external gain dB on far-end ref
+const uint8_t AEC_ASROUTONOFF_CMD = 35;       // int32: 0=AEC residuals, 1=ASR processed
+const uint8_t AEC_ASROUTGAIN_CMD = 36;        // float: gain on ASR output [0.0..1000.0]
+
+// Post-Processing / Noise Suppression (PP_RESID = 17)
+const uint8_t PP_RESID = 17;
+const uint8_t PP_AGCONOFF_CMD = 10;          // int32: 0=off, 1=on
+const uint8_t PP_AGCMAXGAIN_CMD = 11;        // float: max AGC gain [1.0..1000.0]
+const uint8_t PP_AGCDESIREDLEVEL_CMD = 12;   // float: target output power [1e-8..1.0]
+const uint8_t PP_AGCGAIN_CMD = 13;           // float: current AGC gain [1.0..1000.0]
+const uint8_t PP_AGCTIME_CMD = 14;           // float: ramp time [0.5..4.0]s
+const uint8_t PP_AGCFASTTIME_CMD = 15;       // float: fast ramp-down [0.05..4.0]s
+const uint8_t PP_LIMITONOFF_CMD = 19;        // int32: limiter 0=off, 1=on
+const uint8_t PP_LIMITPLIMIT_CMD = 20;       // float: max limiter power [1e-8..1.0]
+const uint8_t PP_MIN_NS_CMD = 21;            // float: stationary noise suppression gain-floor [0.0..1.0]
+const uint8_t PP_MIN_NN_CMD = 22;            // float: non-stationary noise suppression gain-floor [0.0..1.0]
+const uint8_t PP_ECHOONOFF_CMD = 23;         // int32: echo suppression 0=off, 1=on
+const uint8_t PP_GAMMA_E_CMD = 24;           // float: echo over-subtraction direct [0.0..2.0]
+const uint8_t PP_GAMMA_ETAIL_CMD = 25;       // float: echo over-subtraction tail [0.0..2.0]
+const uint8_t PP_GAMMA_ENL_CMD = 26;         // float: non-linear echo over-subtraction [0.0..5.0]
+const uint8_t PP_NLATTENONOFF_CMD = 27;      // int32: non-linear echo attenuation 0=off, 1=on
+const uint8_t PP_DTSENSITIVE_CMD = 31;       // int32: echo vs doubletalk [0..5, 10..15]
+const uint8_t PP_ATTNS_MODE_CMD = 32;        // int32: non-speech AGC reduction 0=off, 1=on
+const uint8_t PP_ATTNS_NOMINAL_CMD = 33;     // float: non-speech attenuation [0.0..1.0]
+
+// Audio Manager (AUDIO_MGR_RESID = 35)
+const uint8_t AUDIO_MGR_RESID = 35;
+const uint8_t AUDIO_MGR_MIC_GAIN_CMD = 0;   // float: pre-SHF mic gain
+const uint8_t AUDIO_MGR_REF_GAIN_CMD = 1;   // float: pre-SHF reference gain
+const uint8_t AUDIO_MGR_SYS_DELAY_CMD = 26; // int32: system delay in samples
 
 const uint8_t RESID_LED = 0x0C;
 const uint8_t RESID_DFU_VERSION = 0xFE;
@@ -239,8 +269,42 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   int read_led_beam_direction();
 
   // DSP optimization methods
-  void set_noise_suppression_level(uint8_t level);   // 0=off, 1=low, 2=medium, 3=high, 4=max
-  void set_interference_angle(float angle_degrees);  // 0-360 degrees
+  void set_noise_suppression_level(uint8_t level);   // 0=off, 1=low, 2=medium, 3=high, 4=max (maps to PP_MIN_NS)
+
+  // Fixed Beam Mode
+  void set_fixed_beams_enabled(bool enabled);
+  void set_fixed_beam_azimuths(float beam1_degrees, float beam2_degrees);
+  void set_fixed_beam_gating(bool enabled);
+  void set_fixed_beam_noise_threshold(float beam1_thr, float beam2_thr);
+
+  // AEC Tuning
+  void set_hpf_mode(uint8_t mode);        // 0=off, 1=70Hz, 2=125Hz, 3=150Hz, 4=180Hz
+  void set_aec_emphasis(uint8_t mode);    // 0=off, 1=on, 2=on_eq
+  void set_far_end_gain(float gain_db);
+  void set_asr_output(bool enabled);
+  void set_asr_output_gain(float gain);
+
+  // Post-Processing
+  void set_agc_enabled(bool enabled);
+  void set_agc_max_gain(float gain);
+  void set_agc_desired_level(float level);
+  void set_pp_limiter(bool enabled);
+  void set_pp_limiter_level(float level);
+  void set_ns_gain_floor(float value);    // PP_MIN_NS: stationary noise suppression gain-floor
+  void set_nn_gain_floor(float value);    // PP_MIN_NN: non-stationary noise suppression gain-floor
+  void set_echo_suppression(bool enabled);
+  void set_echo_gamma_e(float value);
+  void set_echo_gamma_etail(float value);
+  void set_echo_gamma_enl(float value);
+  void set_nl_attenuation(bool enabled);
+  void set_dt_sensitive(uint8_t value);   // 0-5 or 10-15
+  void set_attns_mode(bool enabled);
+  void set_attns_nominal(float value);
+
+  // Audio Manager
+  void set_mic_gain(float gain);
+  void set_ref_gain(float gain);
+  void set_sys_delay(int32_t samples);
 
   // Setters for child components
   void set_mute_switch(MuteSwitch *mute_switch) { mute_switch_ = mute_switch; }
