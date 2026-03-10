@@ -52,6 +52,9 @@ void RespeakerXVF3800::setup() {
                this->firmware_bin_version_minor_, this->firmware_bin_version_patch_, this->firmware_version_major_,
                this->firmware_version_minor_, this->firmware_version_patch_);
       this->start_dfu_update();
+    } else {
+      // Firmware is current — configure DSP for optimal noise suppression
+      this->configure_dsp_();
     }
   });
 }
@@ -490,6 +493,43 @@ std::string RespeakerXVF3800::read_dfu_version() {
     }
   }
   return "Unknown";
+}
+
+// =========================================================================
+//   DSP Configuration Methods
+// =========================================================================
+
+void RespeakerXVF3800::configure_dsp_() {
+  ESP_LOGI(TAG, "Configuring XVF3800 DSP for optimal noise suppression...");
+
+  // Enable interference tracker (IT_ADAPT_CTRL = 1 means on)
+  uint8_t it_on = 1;
+  this->xmos_write_bytes(IT_SERVICER_RESID, IT_ADAPT_CTRL_CMD, &it_on, 1);
+  ESP_LOGD(TAG, "Interference tracker enabled");
+
+  // Set noise suppression to High (level 3)
+  uint8_t ns_level = 3;
+  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &ns_level, 1);
+  ESP_LOGD(TAG, "Noise suppression set to High (level 3)");
+
+  // Lower VNR threshold to 80 (more sensitive to voice in noise)
+  uint8_t vnr_threshold = 80;
+  this->xmos_write_bytes(VNR_SERVICER_RESID, VNR_THRESHOLD_CMD, &vnr_threshold, 1);
+  ESP_LOGD(TAG, "VNR threshold set to 80");
+}
+
+void RespeakerXVF3800::set_noise_suppression_level(uint8_t level) {
+  ESP_LOGI(TAG, "Setting noise suppression level to %u", level);
+  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &level, 1);
+}
+
+void RespeakerXVF3800::set_interference_angle(float angle_degrees) {
+  ESP_LOGI(TAG, "Setting interference rejection angle to %.1f degrees", angle_degrees);
+  static constexpr float PI_F = 3.14159265358979323846f;
+  float radians = angle_degrees * PI_F / 180.0f;
+  uint8_t value[4];
+  memcpy(value, &radians, sizeof(float));
+  this->xmos_write_bytes(BEAM_SERVICER_RESID, BEAM_DIRECTION_CMD, value, 4);
 }
 
 // =========================================================================

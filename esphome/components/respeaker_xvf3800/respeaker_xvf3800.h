@@ -12,6 +12,7 @@
 #include "esphome/core/defines.h"
 #include "esphome/core/hal.h"
 #include <cstring>
+#include <cmath>
 
 namespace esphome {
 namespace respeaker_xvf3800 {
@@ -40,6 +41,17 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 // AEC Azimuth constants for LED beam sensor
 const uint8_t AEC_SERVICER_RESID = 33;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
+
+// DSP servicer resource IDs and command IDs for noise suppression and interference tracking.
+// These IDs are derived from the XVF3800 xvf_host command map (see xvf_extract_command_info).
+const uint8_t NS_SERVICER_RESID = 4;
+const uint8_t NS_ADAPT_CTRL_CMD = 0;    // Noise suppression adaptive control (0=off, 1=low, 2=medium, 3=high, 4=max)
+const uint8_t IT_SERVICER_RESID = 4;
+const uint8_t IT_ADAPT_CTRL_CMD = 2;    // Interference tracker adaptive control (0=off, 1=on)
+const uint8_t VNR_SERVICER_RESID = 5;
+const uint8_t VNR_THRESHOLD_CMD = 0;    // VNR threshold (lower = more sensitive to voice in noise)
+const uint8_t BEAM_SERVICER_RESID = 33; // Reuse AEC servicer for beam direction
+const uint8_t BEAM_DIRECTION_CMD = 74;  // Beam/null steering direction in radians (float, 4 bytes)
 
 const uint8_t RESID_LED = 0x0C;
 const uint8_t RESID_DFU_VERSION = 0xFE;
@@ -226,6 +238,10 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   // Read LED beam direction (0-11)
   int read_led_beam_direction();
 
+  // DSP optimization methods
+  void set_noise_suppression_level(uint8_t level);   // 0=off, 1=low, 2=medium, 3=high, 4=max
+  void set_interference_angle(float angle_degrees);  // 0-360 degrees
+
   // Setters for child components
   void set_mute_switch(MuteSwitch *mute_switch) { mute_switch_ = mute_switch; }
   void set_dfu_version_sensor(DFUVersionTextSensor *dfu_version_sensor) { dfu_version_sensor_ = dfu_version_sensor; }
@@ -281,6 +297,9 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   
   // Helper method for XMOS communication
   void xmos_write_bytes(uint8_t resid, uint8_t cmd, uint8_t *value, uint8_t write_byte_num);
+
+  // DSP configuration helper (called from setup when firmware is current)
+  void configure_dsp_();
 };
 
 }  // namespace respeaker_xvf3800
