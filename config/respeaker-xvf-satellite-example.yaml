@@ -1187,11 +1187,11 @@ script:
           const auto timers = id(va).get_timers();
           if (timers.empty()) return;
 
-          auto output_timer = timers.begin()->second;
+          auto output_timer = *timers.begin();
           for (auto &iterable_timer : timers) {
-            if (iterable_timer.second.is_active &&
-                iterable_timer.second.seconds_left <= output_timer.seconds_left) {
-              output_timer = iterable_timer.second;
+            if (iterable_timer.is_active &&
+                iterable_timer.seconds_left <= output_timer.seconds_left) {
+              output_timer = iterable_timer;
             }
           }
           id(first_active_timer) = output_timer;
@@ -1204,7 +1204,7 @@ script:
           bool output = false;
           if (timers.size() > 0) {
             for (auto &iterable_timer : timers) {
-              if(iterable_timer.second.is_active) {
+              if(iterable_timer.is_active) {
                 output = true;
               }
             }
@@ -1255,7 +1255,7 @@ script:
               // Trigger action if current time matches alarm time
               auto time_now = id(homeassistant_time).now();
               if (time_now.hour == alarm_hour && time_now.minute == alarm_minute) {
-                auto action = id(alarm_action).state;
+                auto action = id(alarm_action).current_option();
                 if (action == "Play sound") {
                   id(timer_ringing).turn_on();
                 } else if (action == "Send event") {
