@@ -41,7 +41,12 @@ I2C bus frequency increased from 100 kHz to 400 kHz (Fast Mode) for faster LED a
 
 ### 📦 ESPHome 2026.2.4 Compatibility
 - Version bumped to `2026.2.4` / `min_version: 2026.2.0`
-- Removed `external_components` entries for components now merged into ESPHome 2026.2.0 core (`mixer`, `resampler`, `audio`, `media_player`, `mdns`, `sendspin`, `file`, `http_request`, `media_source`, `speaker_source`)
+- Removed `external_components` entries for `mixer` and `resampler` — these are now merged into ESPHome 2026.2.0 core
+- Updated commit SHA refs for external components `audio`, `media_player`, `sendspin`, `mdns`, and `file`/`http_request`/`media_source`/`speaker_source` to match the upstream formatBCE 2026.2.0 update
+- `respeaker_xvf3800` and `aic3104` components now pulled from **this fork** (`tommygun333/Respeaker-XVF3800-ESPHome-integration`) so that the DSP features (noise suppression, interference tracking) are actually used
+
+### 🚀 ESPHome Device Builder Support
+Added `config/respeaker-xvf-device-builder.yaml` — a small stub file you can drop into your ESPHome config directory. It uses `packages:` to pull the full config from this repo, making it easy to switch between branches without copy-pasting the entire config each time.
 
 ## Known issues:
 1. There's no buttons, so no way to stop timer or response except saying "stop", and no way to start pipeline manually.

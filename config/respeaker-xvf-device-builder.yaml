@@ -1,0 +1,21 @@
+# ESPHome Device Builder stub for reSpeaker XVF3800
+#
+# This file is intended for use with the ESPHome Device Builder (or ESPHome Dashboard).
+# It pulls the full configuration from this GitHub repository via the `packages:` key,
+# so you can easily switch between branches without copy-pasting the full config each time.
+#
+# Usage:
+#   1. Copy this file to your ESPHome config directory.
+#   2. Ensure you have a secrets.yaml file with:
+#        wifi_ssid: "YourWifiNetwork"
+#        wifi_password: "YourWifiPassword"
+#        ota_password: "YourOtaPassword"
+#   3. To switch branches, change the `ref:` value below to the desired branch or commit SHA.
+
+packages:
+  remote_package:
+    url: https://github.com/tommygun333/Respeaker-XVF3800-ESPHome-integration
+    ref: main
+    files:
+      - config/respeaker-xvf-satellite-example.yaml
+    refresh: 0s
