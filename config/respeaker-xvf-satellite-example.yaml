@@ -2044,7 +2044,7 @@ micro_wake_word:
   id: mww
   microphone:
     microphone: i2s_mics
-    channels: 1
+    channels: 4
     # gain_factor: 4
   stop_after_detection: false
   models:
@@ -2298,7 +2298,7 @@ voice_assistant:
   id: va
   microphone:
     microphone: i2s_mics
-    channels: 0
+    channels: 4
   media_player: external_media_player
   micro_wake_word: mww
   use_wake_word: false
