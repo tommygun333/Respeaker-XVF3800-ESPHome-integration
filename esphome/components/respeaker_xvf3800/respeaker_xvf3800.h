@@ -41,6 +41,19 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 const uint8_t AEC_SERVICER_RESID = 33;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
 
+// DSP servicer resource IDs and command IDs for noise suppression and interference tracking.
+// These IDs are derived from the XVF3800 xvf_host command map (see xvf_extract_command_info).
+// RESID=4 is the preprocessing servicer that handles NS and IT controls.
+// RESID=5 is the VNR (Voice-to-Noise Ratio) servicer.
+const uint8_t NS_SERVICER_RESID = 4;
+const uint8_t NS_ADAPT_CTRL_CMD = 0;    // Noise suppression adaptive control (0=off, 1=low, 2=medium, 3=high, 4=max)
+const uint8_t IT_SERVICER_RESID = 4;
+const uint8_t IT_ADAPT_CTRL_CMD = 2;    // Interference tracker adaptive control (0=off, 1=on)
+const uint8_t VNR_SERVICER_RESID = 5;
+const uint8_t VNR_THRESHOLD_CMD = 0;    // VNR threshold (lower = more sensitive to voice in noise)
+const uint8_t BEAM_SERVICER_RESID = 33; // Reuse AEC servicer for beam direction (same resource)
+const uint8_t BEAM_DIRECTION_CMD = 74;  // Beam/null steering direction in radians (float, 4 bytes)
+
 const uint8_t RESID_LED = 0x0C;
 const uint8_t RESID_DFU_VERSION = 0xFE;
 const uint8_t I2C_COMMAND_READ_BIT = 0x80;
@@ -225,6 +238,11 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   
   // Read LED beam direction (0-11)
   int read_led_beam_direction();
+
+  // DSP configuration for noise suppression and interference tracking
+  void configure_dsp_();
+  void set_noise_suppression_level(uint8_t level);   // 0=off, 1=low, 2=medium, 3=high, 4=max
+  void set_interference_angle(float angle_degrees);  // 0-360 degrees; steers a null towards a noise source
 
   // Setters for child components
   void set_mute_switch(MuteSwitch *mute_switch) { mute_switch_ = mute_switch; }

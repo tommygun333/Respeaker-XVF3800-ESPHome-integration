@@ -52,6 +52,9 @@ void RespeakerXVF3800::setup() {
                this->firmware_bin_version_minor_, this->firmware_bin_version_patch_, this->firmware_version_major_,
                this->firmware_version_minor_, this->firmware_version_patch_);
       this->start_dfu_update();
+    } else {
+      // Firmware is current; apply optimized DSP settings
+      this->configure_dsp_();
     }
   });
 }
@@ -578,6 +581,56 @@ void LEDBeamSensor::update() {
   // } else {
   //   ESP_LOGW(TAG, "Invalid LED beam direction: %d", led_index);
   }
+}
+
+void RespeakerXVF3800::configure_dsp_() {
+  ESP_LOGI(TAG, "Configuring XVF3800 DSP parameters for optimal voice capture...");
+
+  // Enable interference tracking (IT) to suppress point noise sources (TV, radio, etc.)
+  // IT_ADAPT_CTRL: 0=disabled, 1=enabled
+  uint8_t it_on = 1;
+  this->xmos_write_bytes(IT_SERVICER_RESID, IT_ADAPT_CTRL_CMD, &it_on, 1);
+  ESP_LOGD(TAG, "DSP: Interference tracker enabled");
+
+  // Set noise suppression to High (level 3)
+  // NS_ADAPT_CTRL: 0=off, 1=low, 2=medium, 3=high, 4=max
+  uint8_t ns_level = 3;
+  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &ns_level, 1);
+  ESP_LOGD(TAG, "DSP: Noise suppression set to High (level %d)", ns_level);
+
+  // Lower the VNR threshold to improve voice detection in noisy conditions.
+  // The threshold is stored as a single byte; lower values make the detector more sensitive.
+  // Default is typically 128; setting to 80 increases sensitivity in noisy environments.
+  uint8_t vnr_threshold = 80;
+  this->xmos_write_bytes(VNR_SERVICER_RESID, VNR_THRESHOLD_CMD, &vnr_threshold, 1);
+  ESP_LOGD(TAG, "DSP: VNR threshold lowered to %d", vnr_threshold);
+
+  ESP_LOGI(TAG, "XVF3800 DSP configuration applied");
+}
+
+void RespeakerXVF3800::set_noise_suppression_level(uint8_t level) {
+  if (level > 4) {
+    ESP_LOGW(TAG, "Invalid NS level %d, clamping to 4", level);
+    level = 4;
+  }
+  ESP_LOGI(TAG, "Setting noise suppression level to %d", level);
+  this->xmos_write_bytes(NS_SERVICER_RESID, NS_ADAPT_CTRL_CMD, &level, 1);
+}
+
+void RespeakerXVF3800::set_interference_angle(float angle_degrees) {
+  // Normalise to [0, 360)
+  while (angle_degrees < 0.0f) angle_degrees += 360.0f;
+  while (angle_degrees >= 360.0f) angle_degrees -= 360.0f;
+
+  // Convert degrees to radians for the XVF3800 beam/null steering command
+  float angle_radians = angle_degrees * M_PI / 180.0f;
+  ESP_LOGI(TAG, "Steering interference null to %.1f degrees (%.4f rad)", angle_degrees, angle_radians);
+
+  uint8_t payload[4];
+  // Both the ESP32 and the XMOS XVF3800 are little-endian, matching the byte order
+  // already used elsewhere in this file (e.g. read_led_beam_direction memcpy).
+  memcpy(payload, &angle_radians, sizeof(float));
+  this->xmos_write_bytes(BEAM_SERVICER_RESID, BEAM_DIRECTION_CMD, payload, sizeof(payload));
 }
 
 }  // namespace respeaker_xvf3800

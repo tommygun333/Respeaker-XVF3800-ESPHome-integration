@@ -93,8 +93,8 @@ esp32:
 wifi:
   id: wifi_id
   fast_connect: ${hidden_ssid}
-  ssid: "Tomas_NET"
-  password: "Katastrofa123"
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
   
   manual_ip:
     static_ip: 192.168.0.29  # Replace with actual IP from router
@@ -177,14 +177,14 @@ http_request:
 ota:
   - platform: esphome
     id: ota_esphome
-    password: "12345678"
+    password: !secret ota_password
 
 i2c:
   - id: internal_i2c
     sda: GPIO5
     scl: GPIO6
     scan: true
-    frequency: 100kHz
+    frequency: 400kHz
 
 psram:
   mode: octal
@@ -287,6 +287,12 @@ globals:
     initial_value: 'false'
   - id: is_any_audio_playing
     type:  bool
+    restore_value: no
+    initial_value: 'false'
+  # Guard flag: stays true for a brief period after TTS audio appears to end,
+  # preventing premature phase transitions during brief pauses between TTS sentences.
+  - id: tts_guard_active
+    type: bool
     restore_value: no
     initial_value: 'false'
 
@@ -814,7 +820,7 @@ script:
   # For the sake of simplicity and re-usability, the script calls child scripts defined below.
   # This script will be called every time one of these conditions is changing.
   - id: control_leds
-    mode: single
+    mode: restart
     then:
       - lambda: |
           // Cache expensive component checks
@@ -1500,29 +1506,51 @@ media_player:
     
     on_idle:
       - logger.log:
-          format: "⏸️ MP: IDLE | All audio finished | State: %d"
+          format: "⏸️ MP: IDLE | Audio finished, starting guard timer | State: %d"
           args:  ['id(external_media_player).state']
       - logger.log:
-          format: "⏸️ MP:  IDLE | Before clear | TTS: %d | Audio: %d | Phase: %d"
+          format: "⏸️ MP:  IDLE | Before guard | TTS: %d | Audio: %d | Phase: %d"
           args:  ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+      # Activate the TTS guard to prevent premature phase transitions during brief
+      # pauses between sentences in a multi-sentence TTS response.
       - globals.set:
-          id: is_tts_playing
-          value: 'false'
-      - globals.set:
-          id: is_any_audio_playing
-          value: 'false'
-      - lambda: |
-          if (id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
-            ESP_LOGD("media_player", "⏸️ MP: IDLE | Setting phase from REPLYING to IDLE");
-            id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
-          }
-      - logger.log:
-          format: "⏸️ MP:  IDLE | After clear | TTS:  %d | Audio: %d | Phase: %d"
-          args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
-      - script.execute: auto_disable_amplifier
-      - script.execute: update_satellite_sensors  # NEW
-      - script.execute: control_leds
-      - logger.log: "⏸️ MP:  IDLE | Completed"
+          id: tts_guard_active
+          value: 'true'
+      - delay: 500ms  # 500 ms covers typical inter-sentence pauses in multi-sentence TTS responses
+      # Only proceed if the media player is still idle (not restarted by new audio)
+      - if:
+          condition:
+            not:
+              media_player.is_announcing:
+                id: external_media_player
+          then:
+            - globals.set:
+                id: tts_guard_active
+                value: 'false'
+            - globals.set:
+                id: is_tts_playing
+                value: 'false'
+            - globals.set:
+                id: is_any_audio_playing
+                value: 'false'
+            - lambda: |
+                if (id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
+                  ESP_LOGD("media_player", "⏸️ MP: IDLE | Setting phase from REPLYING to IDLE");
+                  id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+                }
+            - logger.log:
+                format: "⏸️ MP:  IDLE | After clear | TTS:  %d | Audio: %d | Phase: %d"
+                args: ['id(is_tts_playing)', 'id(is_any_audio_playing)', 'id(voice_assistant_phase)']
+            - script.execute: auto_disable_amplifier
+            - script.execute: update_satellite_sensors
+            - script.execute: control_leds
+            - logger.log: "⏸️ MP:  IDLE | Completed"
+          else:
+            # Media player resumed (new TTS sentence started) — cancel the guard
+            - globals.set:
+                id: tts_guard_active
+                value: 'false'
+            - logger.log: "⏸️ MP: IDLE guard cancelled — media player resumed"
 
 external_components:
   - source:
@@ -1790,6 +1818,46 @@ select:
             id(user_led_ring_color_g) = 50.0f;
             id(user_led_ring_color_b) = 200.0f;
           }
+  - platform: template
+    name: "Noise Suppression Level"
+    id: noise_suppression_level
+    icon: mdi:waveform
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "Low"
+      - "Medium"
+      - "High"
+      - "Maximum"
+    initial_option: "High"
+    on_value:
+      then:
+        - lambda: |-
+            uint8_t level = 1;  // Low
+            if (x == "Medium")       level = 2;
+            else if (x == "High")    level = 3;
+            else if (x == "Maximum") level = 4;
+            id(respeaker).set_noise_suppression_level(level);
+
+number:
+  - platform: template
+    name: "Interference Rejection Angle"
+    id: interference_angle
+    icon: mdi:compass
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 360
+    step: 15
+    initial_value: 180
+    unit_of_measurement: "°"
+    mode: slider
+    on_value:
+      then:
+        - lambda: |-
+            id(respeaker).set_interference_angle(x);
 
 voice_assistant:
   id: va
