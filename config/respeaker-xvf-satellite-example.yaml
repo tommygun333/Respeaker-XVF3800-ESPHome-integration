@@ -2045,7 +2045,7 @@ micro_wake_word:
   microphone:
     microphone: i2s_mics
     channels: 1
-    gain_factor: 2
+    gain_factor: 6
   stop_after_detection: false
   models:
     - model: https://github.com/kahrendt/microWakeWord/releases/download/okay_nabu_20241226.3/okay_nabu.json
@@ -2059,7 +2059,7 @@ micro_wake_word:
       id: stop
       internal: true
   vad:
-    probability_cutoff: 0.05
+    probability_cutoff: 0.5
   on_wake_word_detected:
     # If the wake word is detected when the device is muted (Possible with the software mute switch): Do nothing
     - if:
