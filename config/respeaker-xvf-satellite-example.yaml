@@ -97,7 +97,7 @@ wifi:
   password: !secret wifi_password
   
   manual_ip:
-    static_ip: 192.168.0.29  # Replace with actual IP from router
+    static_ip: 192.168.1.29  # Replace with actual IP from router
     gateway: 192.168.1.1       # Usually your router IP
     subnet:  255.255.255.0
   # Add power management and connection optimizations
