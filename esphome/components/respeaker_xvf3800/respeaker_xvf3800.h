@@ -44,13 +44,16 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 const uint8_t AEC_SERVICER_RESID = 33;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
 
-<<<<<<< HEAD
 // Fixed Beam Mode (AEC_RESID = 33) — from official respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY command map
 const uint8_t AEC_FIXEDBEAMSONOFF_CMD = 37;      // int32: 0=off, 1=on
 const uint8_t AEC_FIXEDBEAMNOISETHR_CMD = 38;    // 2x float: noise threshold per beam [0.0..1.0]
 const uint8_t AEC_FIXEDBEAMSAZIMUTH_CMD = 81;    // 2x float(radians): azimuth for beam 1, beam 2
 const uint8_t AEC_FIXEDBEAMSELEVATION_CMD = 82;  // 2x float(radians): elevation for beam 1, beam 2
 const uint8_t AEC_FIXEDBEAMSGATING_CMD = 83;     // uint8: 0=off, 1=on (speech energy selects active beam)
+
+// AEC fixed-beam (beam-lock) aliases. Verified against Respeaker xvf_host.py.
+const uint8_t AEC_FIXEDBEAMS_ONOFF_CMD = 37;
+const uint8_t AEC_FIXEDBEAMS_AZIMUTH_CMD = 81;
 
 // AEC Tuning (AEC_RESID = 33)
 const uint8_t AEC_HPFONOFF_CMD = 1;           // int32: 0=off, 1=70Hz, 2=125Hz, 3=150Hz, 4=180Hz
@@ -85,13 +88,6 @@ const uint8_t AUDIO_MGR_RESID = 35;
 const uint8_t AUDIO_MGR_MIC_GAIN_CMD = 0;   // float: pre-SHF mic gain
 const uint8_t AUDIO_MGR_REF_GAIN_CMD = 1;   // float: pre-SHF reference gain
 const uint8_t AUDIO_MGR_SYS_DELAY_CMD = 26; // int32: system delay in samples
-=======
-// AEC fixed-beam (beam-lock) commands. Verified against Respeaker xvf_host.py.
-// AEC_FIXEDBEAMSONOFF       : (33, 37, 1, rw, int32)   — 0 = off, 1 = on
-// AEC_FIXEDBEAMSAZIMUTH_VAL : (33, 81, 2, rw, radians) — two floats: beam 1, beam 2
-const uint8_t AEC_FIXEDBEAMS_ONOFF_CMD = 37;
-const uint8_t AEC_FIXEDBEAMS_AZIMUTH_CMD = 81;
->>>>>>> upstream/main
 
 const uint8_t RESID_LED = 0x0C;
 const uint8_t RESID_DFU_VERSION = 0xFE;
@@ -282,7 +278,6 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   // Read LED beam direction (0-11)
   int read_led_beam_direction();
 
-<<<<<<< HEAD
   // DSP optimization methods
   void set_noise_suppression_level(uint8_t level);   // 0=off, 1=low, 2=medium, 3=high, 4=max (maps to PP_MIN_NS)
 
@@ -320,12 +315,11 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   void set_mic_gain(float gain);
   void set_ref_gain(float gain);
   void set_sys_delay(int32_t samples);
-=======
+
   // Beam lock: pin the AEC beam to the current azimuth for the duration of an utterance,
   // then release it. Intended to be called from voice_assistant lambdas.
   void lock_beam();
   void unlock_beam();
->>>>>>> upstream/main
 
   // Setters for child components
   void set_mute_switch(MuteSwitch *mute_switch) { mute_switch_ = mute_switch; }
@@ -388,12 +382,6 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   bool beam_locked_{false};
   
   // Helper method for XMOS communication
-<<<<<<< HEAD
-  void xmos_write_bytes(uint8_t resid, uint8_t cmd, uint8_t *value, uint8_t write_byte_num);
-
-  // DSP configuration helper (called from setup when firmware is current)
-  void configure_dsp_();
-=======
   void xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num);
 
   // Reads one of the four AEC azimuth slots (radians) returned by cmd 75:
@@ -403,7 +391,9 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   //   3 = auto-select beam (default — what the adaptive LED follows)
   // Returns true on success. Shared by read_led_beam_direction() and lock_beam().
   bool read_azimuth_radians_(float &out_radians, uint8_t beam_index = 3);
->>>>>>> upstream/main
+
+  // DSP configuration helper (called from setup when firmware is current)
+  void configure_dsp_();
 };
 
 }  // namespace respeaker_xvf3800
