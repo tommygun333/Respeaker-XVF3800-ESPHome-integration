@@ -16,32 +16,15 @@ static const char *const TAG = "respeaker_xvf3800";
 
 void RespeakerXVF3800::setup() {
   ESP_LOGCONFIG(TAG, "Setting up RespeakerXVF3800...");
-  
-  // Try to detect the correct I2C address
-    std::vector<uint8_t> test_addresses = {0x2C, 0x28, 0x2A, 0x42, 0x44, 0x50, 0x51};
-    bool found_device = false;
-    
-    for (uint8_t addr : test_addresses) {
-      ESP_LOGD(TAG, "Trying I2C address: 0x%02X", addr);
-      this->set_i2c_address(addr);
-      
-      uint8_t test_data;
-      i2c::ErrorCode err = this->read(&test_data, 1);
-      if (err == i2c::ERROR_OK) {
-        ESP_LOGI(TAG, "Found device at I2C address: 0x%02X", addr);
-        found_device = true;
-        break;
-      } else {
-        ESP_LOGD(TAG, "No response at address 0x%02X, error: %d", addr, (int)err);
-      }
-    }
-    
-    if (!found_device) {
-      ESP_LOGE(TAG, "Could not find XVF3800 device on any tested address");
-      this->mark_failed();
-      return;
-    }
-  
+
+  uint8_t test_data;
+  i2c::ErrorCode err = this->read(&test_data, 1);
+  if (err != i2c::ERROR_OK) {
+    ESP_LOGE(TAG, "Could not communicate with XVF3800 at configured I2C address");
+    this->mark_failed();
+    return;
+  }
+
   // Wait for XMOS to boot...
   this->set_timeout(3000, [this]() {
     if (!this->dfu_get_version_()) {
@@ -244,7 +227,7 @@ uint32_t RespeakerXVF3800::load_buf_(uint8_t *buf, const uint8_t max_len, const 
     buf_len = max_len;
   }
 
-  for (uint8_t i = 0; i < max_len; i++) {
+  for (uint32_t i = 0; i < buf_len; i++) {
     buf[i] = this->firmware_bin_[offset + i];
   }
   return buf_len;
@@ -314,9 +297,9 @@ bool RespeakerXVF3800::dfu_get_version_() {
 }
 
 bool RespeakerXVF3800::dfu_reboot_() {
-  const uint8_t reboot_req[] = {DFU_CONTROLLER_SERVICER_RESID, DFU_CONTROLLER_SERVICER_RESID_DFU_REBOOT, 1};
+  const uint8_t reboot_req[] = {DFU_CONTROLLER_SERVICER_RESID, DFU_CONTROLLER_SERVICER_RESID_DFU_REBOOT, 1, 0};
 
-  auto error_code = this->write(reboot_req, 4);
+  auto error_code = this->write(reboot_req, sizeof(reboot_req));
   if (error_code != i2c::ERROR_OK) {
     ESP_LOGE(TAG, "Reboot request failed");
     return false;
@@ -402,61 +385,118 @@ void RespeakerXVF3800::write_mute_status(bool value) {
   }
 }
 
-int RespeakerXVF3800::read_led_beam_direction() {
-  const uint8_t aec_req[] = {AEC_SERVICER_RESID, 
-                             AEC_AZIMUTH_VALUES_CMD | 0x80, 
-                             17};  // 16 bytes + 1 status byte
+bool RespeakerXVF3800::read_azimuth_radians_(float &out_radians, uint8_t beam_index) {
+  if (beam_index > 3) {
+    ESP_LOGW(TAG, "read_azimuth_radians_: invalid beam index %u", beam_index);
+    return false;
+  }
+
+  const uint8_t aec_req[] = {AEC_SERVICER_RESID,
+                             AEC_AZIMUTH_VALUES_CMD | 0x80,
+                             17};  // 16 bytes (4 floats) + 1 status byte
 
   uint8_t aec_resp[17];
-  
-  i2c::ErrorCode err = this->write_read(aec_req, sizeof(aec_req), aec_resp, sizeof(aec_resp));
-  if (err != i2c::ERROR_OK) {
-    ESP_LOGW(TAG, "Failed to read AEC azimuth values, error=%d", (int)err);
+
+  // The XMOS transport protocol can return CTRL_WAIT (1) when the servicer is
+  // busy; the host is expected to retry. The fast LED poll hides this naturally,
+  // but a one-shot read (e.g. from lock_beam) has to retry explicitly.
+  const uint8_t max_attempts = 8;
+  for (uint8_t attempt = 0; attempt < max_attempts; attempt++) {
+    i2c::ErrorCode err = this->write_read(aec_req, sizeof(aec_req), aec_resp, sizeof(aec_resp));
+    if (err != i2c::ERROR_OK) {
+      ESP_LOGW(TAG, "Failed to read AEC azimuth values, error=%d", (int)err);
+      return false;
+    }
+
+    uint8_t status = aec_resp[0];
+    if (status == CTRL_DONE) {
+      // 4 floats follow at bytes [1..16]: beam 1, beam 2, free-running, auto-select.
+      const uint8_t offset = 1 + beam_index * sizeof(float);
+      float radians;
+      memcpy(&radians, &aec_resp[offset], sizeof(float));
+      ESP_LOGD(TAG, "AEC azimuth (beam %u, raw radians): %f", beam_index, radians);
+      out_radians = radians;
+      return true;
+    }
+
+    if (status != CTRL_WAIT && status != SERVICER_COMMAND_RETRY) {
+      ESP_LOGW(TAG, "AEC azimuth read returned unexpected status 0x%02X — giving up", status);
+      return false;
+    }
+
+    delayMicroseconds(500);
+  }
+
+  // Exhausted retries on a retry status. This is normal during silence
+  // (no source to localize → no fresh azimuth), hence DEBUG not WARN.
+  ESP_LOGD(TAG, "AEC azimuth read still busy after %u attempts (no fresh data)", max_attempts);
+  return false;
+}
+
+int RespeakerXVF3800::read_led_beam_direction() {
+  float radians;
+  // When locked, read beam 1 (the pinned fixed beam) straight from the chip;
+  // otherwise read the auto-select beam (the adaptive default).
+  const uint8_t beam_index = this->beam_locked_ ? 0 : 3;
+  if (!this->read_azimuth_radians_(radians, beam_index)) {
     return -1;
   }
-  
-  uint8_t status = aec_resp[0];
-  if (status != 0) {
-    //ESP_LOGW(TAG, "AEC azimuth read returned error status: %02X", status);
-    return -1;
-  }
-  
-  // Extract the fourth float (bytes 13-16)
-  float fourth_float;
-  memcpy(&fourth_float, &aec_resp[13], sizeof(float));
-  
-  ESP_LOGD(TAG, "AEC fourth float (raw): %f", fourth_float);
-  
-  // Convert from radians to degrees
-  float degrees = fourth_float * 180.0f / M_PI;
-  
-  // Map degrees to LED index (0-11)
-  // Each LED covers 30 degrees (360/12 = 30)
-  // LED 0 is at 0 degrees, LED 1 at 30 degrees, etc.
-  int led_index = (int)round(degrees / 30.0f);
-  
-  // Handle wrap-around and ensure valid range
+
+  float degrees = radians * 180.0f / M_PI;
+
+  // Map degrees to LED index (0-11). Each LED covers 30 degrees.
+  int led_index = (int)roundf(degrees / 30.0f);
   if (led_index < 0) {
     led_index += 12;
   }
   led_index = led_index % 12;
-  
+
   ESP_LOGD(TAG, "AEC azimuth: %.1f degrees -> LED %d", degrees, led_index);
-  
+
   return led_index;
 }
 
-void RespeakerXVF3800::xmos_write_bytes(uint8_t resid, uint8_t cmd, uint8_t *value, uint8_t write_byte_num) {
-  std::vector<uint8_t> payload;
-  payload.push_back(resid);
-  payload.push_back(cmd);
-  payload.push_back(write_byte_num);
-  
-  for (uint8_t i = 0; i < write_byte_num; i++) {
-    payload.push_back(value[i]);
+void RespeakerXVF3800::lock_beam() {
+  float radians;
+  if (!this->read_azimuth_radians_(radians)) {
+    ESP_LOGW(TAG, "lock_beam: failed to read current azimuth; not locking");
+    return;
   }
-  
-  i2c::ErrorCode err = this->write(payload.data(), payload.size());
+
+  // AEC_FIXEDBEAMSAZIMUTH_VALUES is 2 floats (radians): fixed beam 1, fixed beam 2.
+  // We point both at the same direction so whichever beam is gated picks up the source.
+  uint8_t payload[2 * sizeof(float)];
+  memcpy(&payload[0], &radians, sizeof(float));
+  memcpy(&payload[sizeof(float)], &radians, sizeof(float));
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMS_AZIMUTH_CMD, payload, sizeof(payload));
+
+  // AEC_FIXEDBEAMSONOFF is int32 (little-endian on XS3).
+  uint8_t on[4] = {0x01, 0x00, 0x00, 0x00};
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMS_ONOFF_CMD, on, sizeof(on));
+
+  this->beam_locked_ = true;
+
+  ESP_LOGI(TAG, "Beam locked at %.3f rad (%.1f deg)", radians, radians * 180.0f / (float)M_PI);
+}
+
+void RespeakerXVF3800::unlock_beam() {
+  uint8_t off[4] = {0x00, 0x00, 0x00, 0x00};
+  this->xmos_write_bytes(AEC_SERVICER_RESID, AEC_FIXEDBEAMS_ONOFF_CMD, off, sizeof(off));
+  this->beam_locked_ = false;
+  ESP_LOGI(TAG, "Beam lock released");
+}
+
+void RespeakerXVF3800::xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num) {
+  uint8_t payload[3 + 255];
+  payload[0] = resid;
+  payload[1] = cmd;
+  payload[2] = write_byte_num;
+
+  if (write_byte_num > 0 && value != nullptr) {
+    memcpy(&payload[3], value, write_byte_num);
+  }
+
+  i2c::ErrorCode err = this->write(payload, 3 + write_byte_num);
   
   if (err != i2c::ERROR_OK) {
     ESP_LOGW(TAG, "Error in xmos_write_bytes. resid=%d, cmd=%d, error=%d", resid, cmd, (int)err);
@@ -768,7 +808,6 @@ void RespeakerXVF3800::set_sys_delay(int32_t samples) {
 // --- MuteSwitch Component ---
 void MuteSwitch::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Mute Switch...");
-  this->set_update_interval(1000);
 }
 
 void MuteSwitch::dump_config() {
@@ -804,7 +843,6 @@ void MuteSwitch::write_state(bool state) {
 // --- DFUVersionTextSensor Component ---
 void DFUVersionTextSensor::setup() {
   ESP_LOGCONFIG(TAG, "Setting up DFU Version Text Sensor...");
-  this->set_update_interval(30000);
 }
 
 void DFUVersionTextSensor::dump_config() {
@@ -818,7 +856,7 @@ void DFUVersionTextSensor::update() {
   }
   
   std::string version = this->parent_->read_dfu_version();
-  if (this->raw_state != version) {
+  if (this->get_raw_state() != version) {
     this->publish_state(version);
   }
 }
@@ -826,7 +864,6 @@ void DFUVersionTextSensor::update() {
 // --- LEDBeamSensor Component ---
 void LEDBeamSensor::setup() {
   ESP_LOGCONFIG(TAG, "Setting up LED Beam Sensor...");
-  this->set_update_interval(500);
 }
 
 void LEDBeamSensor::dump_config() {
