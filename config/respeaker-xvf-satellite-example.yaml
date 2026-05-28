@@ -370,6 +370,7 @@ switch:
     id: alarm_on
     icon: mdi:bell-badge
     name: "Alarm on"
+<<<<<<< HEAD
   - platform: template
     name: "Amplifier Enable"
     id: amplifier_enable
@@ -388,6 +389,8 @@ switch:
             uint8_t payload[] = {20, 1, 2, 31, 1};
             id(respeaker).write(payload, sizeof(payload));
             ESP_LOGI("amplifier", "Amplifier DISABLED (no hum)");
+=======
+>>>>>>> upstream/main
 
 binary_sensor:
 
