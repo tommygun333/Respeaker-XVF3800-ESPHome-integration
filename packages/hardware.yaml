@@ -136,3 +136,27 @@ audio_dac:
   - platform: aic3104
     id: aic3104_dac
     i2c_id: internal_i2c
+
+# Custom amplifier control switch - turns off amplifier when not in use
+# This reduces background hum when the speaker is idle
+switch:
+  - platform: template
+    name: "Amplifier Enable"
+    id: amplifier_enable
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: false
+    icon: mdi:amplifier
+    entity_category: config
+    turn_on_action:
+      then:
+        - lambda: |-
+            uint8_t payload[] = {20, 1, 2, 31, 0};
+            id(respeaker).write(payload, sizeof(payload));
+            ESP_LOGI("amplifier", "Amplifier ENABLED");
+    turn_off_action:
+      then:
+        - lambda: |-
+            uint8_t payload[] = {20, 1, 2, 31, 1};
+            id(respeaker).write(payload, sizeof(payload));
+            ESP_LOGI("amplifier", "Amplifier DISABLED (no hum)");
