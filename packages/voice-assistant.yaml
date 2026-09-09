@@ -150,6 +150,8 @@ media_player:
           id: media_mixing_input
           decibel_reduction: 20
           duration: 0.0s
+      # Turn on amplifier when announcement starts
+      - switch.turn_on: amplifier_enable
     on_state:
       if:
         condition:
@@ -164,6 +166,17 @@ media_player:
               id: media_mixing_input
               decibel_reduction: 0
               duration: 1.0s
+          # Turn off amplifier when no more audio is playing (2s grace period to avoid pops)
+          - delay: 2s
+          - if:
+              condition:
+                and:
+                  - not:
+                      media_player.is_announcing: external_media_player
+                  - not:
+                      voice_assistant.is_running:
+              then:
+                - switch.turn_off: amplifier_enable
 
 micro_wake_word:
   id: mww
@@ -188,6 +201,8 @@ micro_wake_word:
   vad:
     probability_cutoff: 0.05
   on_wake_word_detected:
+    # Turn on amplifier before anything plays
+    - switch.turn_on: amplifier_enable
     # If the wake word is detected when the device is muted (Possible with the software mute switch): Do nothing
     - if:
         condition:
@@ -288,12 +303,13 @@ voice_assistant:
               id: play_sound
               priority: true
               sound_file: "error_cloud_expired"
-  # When the voice assistant starts: Play a wake up sound, duck audio.
+  # When the voice assistant starts: Play a wake up sound, duck audio, turn on amplifier.
   on_start:
     - mixer_speaker.apply_ducking:
         id: media_mixing_input
         decibel_reduction: 20  # Number of dB quieter; higher implies more quiet, 0 implies full volume
         duration: 0.0s  # The duration of the transition (default is no transition)
+    - switch.turn_on: amplifier_enable
   on_listening:
     - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};
     - script.execute: control_leds
@@ -357,6 +373,17 @@ voice_assistant:
     # Reset the voice assistant phase id and reset the LED animations.
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
+    # Turn off amplifier with grace period (2s) to avoid pops
+    - delay: 2s
+    - if:
+        condition:
+          and:
+            - not:
+                media_player.is_announcing: external_media_player
+            - not:
+                voice_assistant.is_running:
+        then:
+          - switch.turn_off: amplifier_enable
   on_timer_finished:
     - switch.turn_on: timer_ringing
     - lambda: |
