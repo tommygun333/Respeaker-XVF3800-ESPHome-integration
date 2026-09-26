@@ -446,7 +446,28 @@ micro_wake_word:
                                   # This existing 300 ms delay is intentionally
                                   # preserved for the baseline timing test.
                                   - delay: 300ms
+                                  - script.execute:
+                                      id: play_sound
+                                      priority: true
+                                      sound_file: "wake_word_triggered_sound"
 
+                                  # Wait for the asynchronous media player to actually start the wake sound.
+                                  - wait_until:
+                                      condition:
+                                        media_player.is_announcing:
+                                          id: external_media_player
+                                      timeout: 500ms
+
+                                  # Then wait for the wake sound to really finish.
+                                  - wait_until:
+                                      condition:
+                                        not:
+                                          media_player.is_announcing:
+                                            id: external_media_player
+                                      timeout: 2s
+
+                                  # Small settling period for AEC / speaker path.
+                                  - delay: 50ms
                             # -------------------------------------------------------
                             # Record when the YAML actually requests VA startup.
                             # -------------------------------------------------------
