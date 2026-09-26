@@ -71,9 +71,10 @@ void RespeakerXVF3800::loop() {
       break;
 
     default:
-      // Poll one DSP parameter every 500 ms. Spreading the reads out avoids a
-      // burst of control traffic alongside the 10 Hz beam-direction polling.
-      if (!this->is_failed() && this->version_read_() && millis() - this->dsp_diagnostic_last_poll_ms_ >= 500) {
+      // Poll one DSP parameter at a time. An XMOS control read commonly returns
+      // CTRL_WAIT on its first request, so poll_next_dsp_diagnostic_() keeps the
+      // same command selected until the retry completes.
+      if (!this->is_failed() && this->version_read_() && millis() - this->dsp_diagnostic_last_poll_ms_ >= 10) {
         this->dsp_diagnostic_last_poll_ms_ = millis();
         this->poll_next_dsp_diagnostic_();
       }
@@ -509,12 +510,13 @@ bool RespeakerXVF3800::set_pp_dt_sensitive(int32_t value) {
 }
 
 bool RespeakerXVF3800::set_pp_mgscale_max(float value) {
-  float max_value, min_value, current_value;
-  if (!std::isfinite(value) || value < 1.0f || value > 100000.0f ||
-      !this->read_pp_mgscale_(max_value, min_value, current_value)) {
+  if (!std::isfinite(value) || value < 1.0f || value > 100000.0f || !this->dsp_cache_.pp_mgscale_valid) {
     ESP_LOGW(TAG, "Unable to set PP_MGSCALE max to %.3f", value);
     return false;
   }
+  const float max_value = this->dsp_cache_.pp_mgscale[0];
+  const float min_value = this->dsp_cache_.pp_mgscale[1];
+  const float current_value = this->dsp_cache_.pp_mgscale[2];
   if (value < min_value) {
     ESP_LOGW(TAG, "Rejected PP_MGSCALE max %.3f below current min %.3f", value, min_value);
     return false;
@@ -525,12 +527,13 @@ bool RespeakerXVF3800::set_pp_mgscale_max(float value) {
 }
 
 bool RespeakerXVF3800::set_pp_mgscale_min(float value) {
-  float max_value, min_value, current_value;
-  if (!std::isfinite(value) || value < 0.0f || value > 100000.0f ||
-      !this->read_pp_mgscale_(max_value, min_value, current_value)) {
+  if (!std::isfinite(value) || value < 0.0f || value > 100000.0f || !this->dsp_cache_.pp_mgscale_valid) {
     ESP_LOGW(TAG, "Unable to set PP_MGSCALE min to %.3f", value);
     return false;
   }
+  const float max_value = this->dsp_cache_.pp_mgscale[0];
+  const float min_value = this->dsp_cache_.pp_mgscale[1];
+  const float current_value = this->dsp_cache_.pp_mgscale[2];
   if (value > max_value) {
     ESP_LOGW(TAG, "Rejected PP_MGSCALE min %.3f above current max %.3f", value, max_value);
     return false;
@@ -811,83 +814,109 @@ bool RespeakerXVF3800::write_pp_mgscale_(float max_value, float min_value, float
 }
 
 void RespeakerXVF3800::poll_next_dsp_diagnostic_() {
+  bool success = false;
   switch (this->dsp_diagnostic_poll_index_) {
     case 0:
-      this->dsp_cache_.aec_path_change_valid =
-          this->read_int32_(AEC_SERVICER_RESID, AEC_PATH_CHANGE_CMD, this->dsp_cache_.aec_path_change);
+      success = this->read_int32_(AEC_SERVICER_RESID, AEC_PATH_CHANGE_CMD, this->dsp_cache_.aec_path_change);
+      if (success) this->dsp_cache_.aec_path_change_valid = true;
       break;
     case 1:
-      this->dsp_cache_.aec_converged_valid =
-          this->read_int32_(AEC_SERVICER_RESID, AEC_CONVERGED_CMD, this->dsp_cache_.aec_converged);
+      success = this->read_int32_(AEC_SERVICER_RESID, AEC_CONVERGED_CMD, this->dsp_cache_.aec_converged);
+      if (success) this->dsp_cache_.aec_converged_valid = true;
       break;
     case 2:
-      this->dsp_cache_.aec_asr_output_on_valid = this->read_int32_(
-          AEC_SERVICER_RESID, AEC_ASR_OUTPUT_ONOFF_CMD, this->dsp_cache_.aec_asr_output_on);
+      success = this->read_int32_(AEC_SERVICER_RESID, AEC_ASR_OUTPUT_ONOFF_CMD,
+                                  this->dsp_cache_.aec_asr_output_on);
+      if (success) this->dsp_cache_.aec_asr_output_on_valid = true;
       break;
     case 3:
-      this->dsp_cache_.aec_asr_output_gain_valid = this->read_float_(
-          AEC_SERVICER_RESID, AEC_ASR_OUTPUT_GAIN_CMD, this->dsp_cache_.aec_asr_output_gain);
+      success = this->read_float_(AEC_SERVICER_RESID, AEC_ASR_OUTPUT_GAIN_CMD,
+                                  this->dsp_cache_.aec_asr_output_gain);
+      if (success) this->dsp_cache_.aec_asr_output_gain_valid = true;
       break;
     case 4:
-      this->dsp_cache_.audio_mgr_op_l_valid = this->xmos_read_bytes_(
-          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_L_CMD, this->dsp_cache_.audio_mgr_op_l, 2);
+      success = this->xmos_read_bytes_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_L_CMD,
+                                       this->dsp_cache_.audio_mgr_op_l, 2);
+      if (success) this->dsp_cache_.audio_mgr_op_l_valid = true;
       break;
     case 5:
-      this->dsp_cache_.audio_mgr_op_r_valid = this->xmos_read_bytes_(
-          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_R_CMD, this->dsp_cache_.audio_mgr_op_r, 2);
+      success = this->xmos_read_bytes_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_R_CMD,
+                                       this->dsp_cache_.audio_mgr_op_r, 2);
+      if (success) this->dsp_cache_.audio_mgr_op_r_valid = true;
       break;
     case 6:
-      this->dsp_cache_.pp_dt_sensitive_valid = this->read_int32_(
-          PP_SERVICER_RESID, PP_DT_SENSITIVE_CMD, this->dsp_cache_.pp_dt_sensitive);
+      success = this->read_int32_(PP_SERVICER_RESID, PP_DT_SENSITIVE_CMD, this->dsp_cache_.pp_dt_sensitive);
+      if (success) this->dsp_cache_.pp_dt_sensitive_valid = true;
       break;
     case 7:
-      this->dsp_cache_.pp_mgscale_valid = this->read_pp_mgscale_(
-          this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1], this->dsp_cache_.pp_mgscale[2]);
+      success = this->read_pp_mgscale_(this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1],
+                                       this->dsp_cache_.pp_mgscale[2]);
+      if (success) this->dsp_cache_.pp_mgscale_valid = true;
       break;
     case 8:
-      this->dsp_cache_.pp_echo_on_valid =
-          this->read_int32_(PP_SERVICER_RESID, PP_ECHO_ONOFF_CMD, this->dsp_cache_.pp_echo_on);
+      success = this->read_int32_(PP_SERVICER_RESID, PP_ECHO_ONOFF_CMD, this->dsp_cache_.pp_echo_on);
+      if (success) this->dsp_cache_.pp_echo_on_valid = true;
       break;
     case 9:
-      this->dsp_cache_.pp_nl_atten_on_valid = this->read_int32_(
-          PP_SERVICER_RESID, PP_NL_ATTEN_ONOFF_CMD, this->dsp_cache_.pp_nl_atten_on);
+      success = this->read_int32_(PP_SERVICER_RESID, PP_NL_ATTEN_ONOFF_CMD, this->dsp_cache_.pp_nl_atten_on);
+      if (success) this->dsp_cache_.pp_nl_atten_on_valid = true;
       break;
     case 10:
-      this->dsp_cache_.pp_min_ns_valid =
-          this->read_float_(PP_SERVICER_RESID, PP_MIN_NS_CMD, this->dsp_cache_.pp_min_ns);
+      success = this->read_float_(PP_SERVICER_RESID, PP_MIN_NS_CMD, this->dsp_cache_.pp_min_ns);
+      if (success) this->dsp_cache_.pp_min_ns_valid = true;
       break;
     case 11:
-      this->dsp_cache_.pp_min_nn_valid =
-          this->read_float_(PP_SERVICER_RESID, PP_MIN_NN_CMD, this->dsp_cache_.pp_min_nn);
+      success = this->read_float_(PP_SERVICER_RESID, PP_MIN_NN_CMD, this->dsp_cache_.pp_min_nn);
+      if (success) this->dsp_cache_.pp_min_nn_valid = true;
       break;
     case 12:
-      this->dsp_cache_.pp_gamma_e_valid =
-          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_E_CMD, this->dsp_cache_.pp_gamma_e);
+      success = this->read_float_(PP_SERVICER_RESID, PP_GAMMA_E_CMD, this->dsp_cache_.pp_gamma_e);
+      if (success) this->dsp_cache_.pp_gamma_e_valid = true;
       break;
     case 13:
-      this->dsp_cache_.pp_gamma_etail_valid =
-          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ETAIL_CMD, this->dsp_cache_.pp_gamma_etail);
+      success = this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ETAIL_CMD, this->dsp_cache_.pp_gamma_etail);
+      if (success) this->dsp_cache_.pp_gamma_etail_valid = true;
       break;
     case 14:
-      this->dsp_cache_.pp_gamma_enl_valid =
-          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ENL_CMD, this->dsp_cache_.pp_gamma_enl);
+      success = this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ENL_CMD, this->dsp_cache_.pp_gamma_enl);
+      if (success) this->dsp_cache_.pp_gamma_enl_valid = true;
       break;
     case 15:
-      this->dsp_cache_.audio_mgr_mic_gain_valid = this->read_float_(
-          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_MIC_GAIN_CMD, this->dsp_cache_.audio_mgr_mic_gain);
+      success = this->read_float_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_MIC_GAIN_CMD,
+                                  this->dsp_cache_.audio_mgr_mic_gain);
+      if (success) this->dsp_cache_.audio_mgr_mic_gain_valid = true;
       break;
     case 16:
-      this->dsp_cache_.audio_mgr_ref_gain_valid = this->read_float_(
-          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_REF_GAIN_CMD, this->dsp_cache_.audio_mgr_ref_gain);
+      success = this->read_float_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_REF_GAIN_CMD,
+                                  this->dsp_cache_.audio_mgr_ref_gain);
+      if (success) this->dsp_cache_.audio_mgr_ref_gain_valid = true;
       break;
     case 17:
-      this->dsp_cache_.audio_mgr_sys_delay_valid = this->read_int32_(
-          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_SYS_DELAY_CMD, this->dsp_cache_.audio_mgr_sys_delay);
+      success = this->read_int32_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_SYS_DELAY_CMD,
+                                  this->dsp_cache_.audio_mgr_sys_delay);
+      if (success) this->dsp_cache_.audio_mgr_sys_delay_valid = true;
       break;
     default:
       break;
   }
-  this->dsp_diagnostic_poll_index_ = (this->dsp_diagnostic_poll_index_ + 1) % 18;
+
+  if (success) this->dsp_diagnostic_valid_mask_ |= 1UL << this->dsp_diagnostic_poll_index_;
+
+  if (success || ++this->dsp_diagnostic_retry_count_ >= 100) {
+    this->dsp_diagnostic_retry_count_ = 0;
+    this->dsp_diagnostic_poll_index_ = (this->dsp_diagnostic_poll_index_ + 1) % 18;
+
+    if (this->dsp_diagnostic_poll_index_ == 0) {
+      uint8_t valid_count = 0;
+      for (uint8_t i = 0; i < 18; i++) {
+        if (this->dsp_diagnostic_valid_mask_ & (1UL << i)) valid_count++;
+      }
+      if (valid_count != this->dsp_diagnostic_last_valid_count_) {
+        ESP_LOGI(TAG, "XVF3800 DSP readback: %u/18 parameters available", static_cast<unsigned>(valid_count));
+        this->dsp_diagnostic_last_valid_count_ = valid_count;
+      }
+    }
+  }
 }
 
 void RespeakerXVF3800::set_led_ring(uint32_t *rgb_array) {

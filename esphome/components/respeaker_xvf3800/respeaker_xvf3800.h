@@ -415,6 +415,9 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   } dsp_cache_;
 
   uint8_t dsp_diagnostic_poll_index_{0};
+  uint8_t dsp_diagnostic_retry_count_{0};
+  uint32_t dsp_diagnostic_valid_mask_{0};
+  uint8_t dsp_diagnostic_last_valid_count_{0xFF};
   uint32_t dsp_diagnostic_last_poll_ms_{0};
 
   // Helper method for XMOS communication
