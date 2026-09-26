@@ -23,7 +23,7 @@ substitutions:
   # --- Tuning --------------------------------------------------------------
   # Set this to "true" if your network does not broadcast its SSID.
   hidden_ssid: "false"
-  log_level: INFO
+  log_level: DEBUG
 
   # --- Voice assistant phases ----------------------------------------------
   # The voice assistant is ready to be triggered by a wake word
