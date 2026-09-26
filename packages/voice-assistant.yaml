@@ -466,8 +466,6 @@ micro_wake_word:
                                             id: external_media_player
                                       timeout: 2s
 
-                                  # Small settling period for AEC / speaker path.
-                                  - delay: 50ms
                             # -------------------------------------------------------
                             # Record when the YAML actually requests VA startup.
                             # -------------------------------------------------------
