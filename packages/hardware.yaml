@@ -128,7 +128,7 @@ respeaker_xvf3800:
     # never, and the Beam lock switch stops working.
     update_interval: 100ms
   firmware:
-    url: https://github.com/formatBCE/Respeaker-XVF3800-ESPHome-integration/raw/${respeaker_ref}/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
+    url: https://github.com/tommygun333/Respeaker-XVF3800-ESPHome-integration/raw/${respeaker_ref}/application_xvf3800_inthost-lr48-sqr-i2c-v1.0.7-release.bin
     version: "1.0.7"
     md5: 043a848f544ff2c7265ac19685daf5de
 
@@ -160,3 +160,235 @@ switch:
             uint8_t payload[] = {20, 1, 2, 31, 1};
             id(respeaker).write(payload, sizeof(payload));
             ESP_LOGI("amplifier", "Amplifier DISABLED (no hum)");
+
+  # Diagnostic controls for isolating post-processor echo suppression. State
+  # comes from XVF3800 readback rather than optimistic/restore-value tracking.
+  - platform: template
+    id: pp_echo_on
+    name: "XVF3800 Echo Suppression"
+    icon: mdi:echo
+    entity_category: config
+    lambda: return id(respeaker).get_pp_echo_on();
+    turn_on_action:
+      - lambda: id(respeaker).set_pp_echo_on(true);
+    turn_off_action:
+      - lambda: id(respeaker).set_pp_echo_on(false);
+
+  - platform: template
+    id: pp_nl_atten_on
+    name: "XVF3800 Nonlinear Echo Attenuation"
+    icon: mdi:waveform
+    entity_category: config
+    lambda: return id(respeaker).get_pp_nl_atten_on();
+    turn_on_action:
+      - lambda: id(respeaker).set_pp_nl_atten_on(true);
+    turn_off_action:
+      - lambda: id(respeaker).set_pp_nl_atten_on(false);
+
+
+select:
+  - platform: template
+    id: pp_dt_sensitive
+    name: "XVF3800 Double-Talk Sensitivity"
+    icon: mdi:account-voice
+    entity_category: config
+    update_interval: 5s
+    options:
+      - "0"
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "5"
+      - "10"
+      - "11"
+      - "12"
+      - "13"
+      - "14"
+      - "15"
+    lambda: return id(respeaker).get_pp_dt_sensitive();
+    set_action:
+      - lambda: |-
+          const int32_t value = x.size() == 2 ? 10 + (x[1] - '0') : x[0] - '0';
+          id(respeaker).set_pp_dt_sensitive(value);
+
+
+number:
+  # PP_MGSCALE is one atomic (max,min,current) tuple in XMOS. The component
+  # performs read-modify-write and preserves whether current was max or min.
+  - platform: template
+    id: pp_mgscale_max
+    name: "XVF3800 MGSCALE Max"
+    icon: mdi:tune-vertical
+    entity_category: config
+    update_interval: 5s
+    min_value: 1
+    max_value: 100000
+    step: 1
+    mode: box
+    lambda: return id(respeaker).get_pp_mgscale_max();
+    set_action:
+      - lambda: id(respeaker).set_pp_mgscale_max(x);
+
+  - platform: template
+    id: pp_mgscale_min
+    name: "XVF3800 MGSCALE Min"
+    icon: mdi:tune-vertical
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 100000
+    step: 0.05
+    mode: box
+    lambda: return id(respeaker).get_pp_mgscale_min();
+    set_action:
+      - lambda: id(respeaker).set_pp_mgscale_min(x);
+
+  - platform: template
+    id: pp_min_ns
+    name: "XVF3800 Stationary Noise Gain Floor"
+    icon: mdi:waveform
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 1
+    step: 0.01
+    mode: slider
+    lambda: return id(respeaker).get_pp_min_ns();
+    set_action:
+      - lambda: id(respeaker).set_pp_min_ns(x);
+
+  - platform: template
+    id: pp_min_nn
+    name: "XVF3800 Non-Stationary Noise Gain Floor"
+    icon: mdi:waveform
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 1
+    step: 0.01
+    mode: slider
+    lambda: return id(respeaker).get_pp_min_nn();
+    set_action:
+      - lambda: id(respeaker).set_pp_min_nn(x);
+
+  - platform: template
+    id: pp_gamma_e
+    name: "XVF3800 Echo Gamma E"
+    icon: mdi:sine-wave
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 2
+    step: 0.1
+    mode: slider
+    lambda: return id(respeaker).get_pp_gamma_e();
+    set_action:
+      - lambda: id(respeaker).set_pp_gamma_e(x);
+
+  - platform: template
+    id: pp_gamma_etail
+    name: "XVF3800 Echo Gamma E Tail"
+    icon: mdi:sine-wave
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 2
+    step: 0.1
+    mode: slider
+    lambda: return id(respeaker).get_pp_gamma_etail();
+    set_action:
+      - lambda: id(respeaker).set_pp_gamma_etail(x);
+
+  - platform: template
+    id: pp_gamma_enl
+    name: "XVF3800 Echo Gamma ENL"
+    icon: mdi:sine-wave
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 5
+    step: 0.1
+    mode: slider
+    lambda: return id(respeaker).get_pp_gamma_enl();
+    set_action:
+      - lambda: id(respeaker).set_pp_gamma_enl(x);
+
+
+binary_sensor:
+  - platform: template
+    name: "XVF3800 AEC Converged"
+    icon: mdi:check-decagram
+    entity_category: diagnostic
+    lambda: return id(respeaker).get_aec_converged();
+
+  - platform: template
+    name: "XVF3800 AEC Path Change"
+    icon: mdi:swap-horizontal
+    entity_category: diagnostic
+    lambda: return id(respeaker).get_aec_path_change();
+
+  - platform: template
+    name: "XVF3800 ASR Output Enabled"
+    icon: mdi:microphone-message
+    entity_category: diagnostic
+    lambda: return id(respeaker).get_aec_asr_output_on();
+
+
+sensor:
+  - platform: template
+    name: "XVF3800 MGSCALE Current"
+    icon: mdi:tune-vertical
+    entity_category: diagnostic
+    update_interval: 5s
+    accuracy_decimals: 3
+    lambda: return id(respeaker).get_pp_mgscale_current();
+
+  - platform: template
+    name: "XVF3800 ASR Output Gain"
+    icon: mdi:amplifier
+    entity_category: diagnostic
+    update_interval: 5s
+    accuracy_decimals: 3
+    lambda: return id(respeaker).get_aec_asr_output_gain();
+
+  - platform: template
+    name: "XVF3800 Microphone Gain"
+    icon: mdi:microphone-plus
+    entity_category: diagnostic
+    update_interval: 5s
+    accuracy_decimals: 3
+    lambda: return id(respeaker).get_audio_mgr_mic_gain();
+
+  - platform: template
+    name: "XVF3800 Reference Gain"
+    icon: mdi:volume-plus
+    entity_category: diagnostic
+    update_interval: 5s
+    accuracy_decimals: 3
+    lambda: return id(respeaker).get_audio_mgr_ref_gain();
+
+  - platform: template
+    name: "XVF3800 System Delay"
+    icon: mdi:timer-sand
+    entity_category: diagnostic
+    update_interval: 5s
+    accuracy_decimals: 0
+    unit_of_measurement: samples
+    lambda: return id(respeaker).get_audio_mgr_sys_delay();
+
+
+text_sensor:
+  - platform: template
+    name: "XVF3800 Output Left"
+    icon: mdi:audio-input-stereo-minijack
+    entity_category: diagnostic
+    update_interval: 5s
+    lambda: return id(respeaker).get_audio_mgr_op_l();
+
+  - platform: template
+    name: "XVF3800 Output Right"
+    icon: mdi:audio-input-stereo-minijack
+    entity_category: diagnostic
+    update_interval: 5s
+    lambda: return id(respeaker).get_audio_mgr_op_r();

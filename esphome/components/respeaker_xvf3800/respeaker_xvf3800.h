@@ -41,6 +41,10 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 
 // AEC Azimuth constants for LED beam sensor
 const uint8_t AEC_SERVICER_RESID = 33;
+const uint8_t AEC_PATH_CHANGE_CMD = 0;
+const uint8_t AEC_CONVERGED_CMD = 3;
+const uint8_t AEC_ASR_OUTPUT_ONOFF_CMD = 35;
+const uint8_t AEC_ASR_OUTPUT_GAIN_CMD = 36;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
 
 // AEC fixed-beam (beam-lock) commands. Verified against Respeaker xvf_host.py.
@@ -48,6 +52,27 @@ const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
 // AEC_FIXEDBEAMSAZIMUTH_VAL : (33, 81, 2, rw, radians) — two floats: beam 1, beam 2
 const uint8_t AEC_FIXEDBEAMS_ONOFF_CMD = 37;
 const uint8_t AEC_FIXEDBEAMS_AZIMUTH_CMD = 81;
+
+// Post-processor and Audio Manager commands from Seeed's XVF3800 I2C command
+// map / the official xvf_host.py table. Keep these at the XMOS firmware
+// defaults unless an exposed control is deliberately changed by the user.
+const uint8_t PP_SERVICER_RESID = 17;
+const uint8_t PP_MIN_NS_CMD = 21;
+const uint8_t PP_MIN_NN_CMD = 22;
+const uint8_t PP_ECHO_ONOFF_CMD = 23;
+const uint8_t PP_GAMMA_E_CMD = 24;
+const uint8_t PP_GAMMA_ETAIL_CMD = 25;
+const uint8_t PP_GAMMA_ENL_CMD = 26;
+const uint8_t PP_NL_ATTEN_ONOFF_CMD = 27;
+const uint8_t PP_MGSCALE_CMD = 29;
+const uint8_t PP_DT_SENSITIVE_CMD = 31;
+
+const uint8_t AUDIO_MGR_SERVICER_RESID = 35;
+const uint8_t AUDIO_MGR_MIC_GAIN_CMD = 0;
+const uint8_t AUDIO_MGR_REF_GAIN_CMD = 1;
+const uint8_t AUDIO_MGR_OP_L_CMD = 15;
+const uint8_t AUDIO_MGR_OP_R_CMD = 19;
+const uint8_t AUDIO_MGR_SYS_DELAY_CMD = 26;
 
 const uint8_t RESID_LED = 0x0C;
 const uint8_t RESID_DFU_VERSION = 0xFE;
@@ -243,6 +268,44 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   void lock_beam();
   void unlock_beam();
 
+  // DSP tuning controls. Every value exposed to Home Assistant is read back
+  // from the XVF3800; these setters never install an experimental boot preset.
+  bool set_pp_dt_sensitive(int32_t value);
+  bool set_pp_mgscale_max(float value);
+  bool set_pp_mgscale_min(float value);
+  bool set_pp_echo_on(bool enabled);
+  bool set_pp_nl_atten_on(bool enabled);
+  bool set_pp_min_ns(float value);
+  bool set_pp_min_nn(float value);
+  bool set_pp_gamma_e(float value);
+  bool set_pp_gamma_etail(float value);
+  bool set_pp_gamma_enl(float value);
+
+  // Cached readback accessors. Diagnostics are polled one command at a time in
+  // loop(), avoiding a burst of I2C traffic or direct I2C reads from template
+  // entity lambdas.
+  optional<bool> get_aec_converged() const;
+  optional<bool> get_aec_path_change() const;
+  optional<bool> get_aec_asr_output_on() const;
+  optional<float> get_aec_asr_output_gain() const;
+  optional<std::string> get_audio_mgr_op_l() const;
+  optional<std::string> get_audio_mgr_op_r() const;
+  optional<std::string> get_pp_dt_sensitive() const;
+  optional<float> get_pp_mgscale_max() const;
+  optional<float> get_pp_mgscale_min() const;
+  optional<float> get_pp_mgscale_current() const;
+  optional<bool> get_pp_echo_on() const;
+  optional<bool> get_pp_nl_atten_on() const;
+  optional<float> get_pp_min_ns() const;
+  optional<float> get_pp_min_nn() const;
+  optional<float> get_pp_gamma_e() const;
+  optional<float> get_pp_gamma_etail() const;
+  optional<float> get_pp_gamma_enl() const;
+  optional<float> get_audio_mgr_mic_gain() const;
+  optional<float> get_audio_mgr_ref_gain() const;
+  optional<float> get_audio_mgr_sys_delay() const;
+  void log_dsp_diagnostics() const;
+
   // Setters for child components
   void set_mute_switch(MuteSwitch *mute_switch) { mute_switch_ = mute_switch; }
   void set_dfu_version_sensor(DFUVersionTextSensor *dfu_version_sensor) { dfu_version_sensor_ = dfu_version_sensor; }
@@ -312,8 +375,58 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   uint32_t last_led_frame_[12]{};
   bool led_frame_valid_{false};
 
+  struct DspDiagnosticCache {
+    bool aec_path_change_valid{false};
+    int32_t aec_path_change{0};
+    bool aec_converged_valid{false};
+    int32_t aec_converged{0};
+    bool aec_asr_output_on_valid{false};
+    int32_t aec_asr_output_on{0};
+    bool aec_asr_output_gain_valid{false};
+    float aec_asr_output_gain{0.0f};
+    bool audio_mgr_op_l_valid{false};
+    uint8_t audio_mgr_op_l[2]{};
+    bool audio_mgr_op_r_valid{false};
+    uint8_t audio_mgr_op_r[2]{};
+    bool pp_dt_sensitive_valid{false};
+    int32_t pp_dt_sensitive{0};
+    bool pp_mgscale_valid{false};
+    float pp_mgscale[3]{};
+    bool pp_echo_on_valid{false};
+    int32_t pp_echo_on{0};
+    bool pp_nl_atten_on_valid{false};
+    int32_t pp_nl_atten_on{0};
+    bool pp_min_ns_valid{false};
+    float pp_min_ns{0.0f};
+    bool pp_min_nn_valid{false};
+    float pp_min_nn{0.0f};
+    bool pp_gamma_e_valid{false};
+    float pp_gamma_e{0.0f};
+    bool pp_gamma_etail_valid{false};
+    float pp_gamma_etail{0.0f};
+    bool pp_gamma_enl_valid{false};
+    float pp_gamma_enl{0.0f};
+    bool audio_mgr_mic_gain_valid{false};
+    float audio_mgr_mic_gain{0.0f};
+    bool audio_mgr_ref_gain_valid{false};
+    float audio_mgr_ref_gain{0.0f};
+    bool audio_mgr_sys_delay_valid{false};
+    int32_t audio_mgr_sys_delay{0};
+  } dsp_cache_;
+
+  uint8_t dsp_diagnostic_poll_index_{0};
+  uint32_t dsp_diagnostic_last_poll_ms_{0};
+
   // Helper method for XMOS communication
-  void xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num);
+  bool xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num);
+  bool xmos_read_bytes_(uint8_t resid, uint8_t cmd, uint8_t *value, uint8_t read_byte_num);
+  bool read_int32_(uint8_t resid, uint8_t cmd, int32_t &value);
+  bool read_float_(uint8_t resid, uint8_t cmd, float &value);
+  bool write_int32_(uint8_t resid, uint8_t cmd, int32_t value);
+  bool write_float_(uint8_t resid, uint8_t cmd, float value);
+  bool read_pp_mgscale_(float &max_value, float &min_value, float &current_value);
+  bool write_pp_mgscale_(float max_value, float min_value, float current_value);
+  void poll_next_dsp_diagnostic_();
 
   // Reads one of the four AEC azimuth slots (radians) returned by cmd 75:
   //   0 = beam 1 (fixed beam 1 when fixed mode is on)

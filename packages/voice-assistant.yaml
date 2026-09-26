@@ -90,7 +90,27 @@ globals:
 logger:
   logs:
     voice_timing: INFO
+    xvf_dsp: INFO
     voice_assistant: DEBUG
+
+
+number:
+  # Applies only while the local wake acknowledgement is playing. The mixer
+  # source is restored to 0 dB reduction before voice capture starts, so TTS
+  # and timer announcements retain their normal level.
+  - platform: template
+    id: wake_sound_attenuation
+    name: "Wake Sound Attenuation"
+    icon: mdi:volume-minus
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 12
+    min_value: 0
+    max_value: 30
+    step: 1
+    mode: slider
+    unit_of_measurement: dB
 
 
 switch:
@@ -446,15 +466,15 @@ micro_wake_word:
                                         id(voice_dbg_wake_sound_request_ms) - id(voice_dbg_wake_ms)
                                       );
 
-                                  - script.execute:
-                                      id: play_sound
-                                      priority: true
-                                      sound_file: "wake_word_triggered_sound"
+                                      // Log the latest cached XVF3800 state
+                                      // without adding I2C latency to wake handling.
+                                      id(respeaker).log_dsp_diagnostics();
 
-                                  # IMPORTANT:
-                                  # This existing 300 ms delay is intentionally
-                                  # preserved for the baseline timing test.
-                                  - delay: 300ms
+                                  - mixer_speaker.apply_ducking:
+                                      id: announcement_mixing_input
+                                      decibel_reduction: !lambda return id(wake_sound_attenuation).state;
+                                      duration: 0s
+
                                   - script.execute:
                                       id: play_sound
                                       priority: true
@@ -474,6 +494,11 @@ micro_wake_word:
                                           media_player.is_announcing:
                                             id: external_media_player
                                       timeout: 2s
+
+                                  - mixer_speaker.apply_ducking:
+                                      id: announcement_mixing_input
+                                      decibel_reduction: 0
+                                      duration: 0s
 
                             # -------------------------------------------------------
                             # Record when the YAML actually requests VA startup.

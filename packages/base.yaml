@@ -208,7 +208,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/tommygun333/Respeaker-XVF3800-ESPHome-integration
-      ref: main
+      ref: ${respeaker_ref}
     components:
       - respeaker_xvf3800
       - aic3104

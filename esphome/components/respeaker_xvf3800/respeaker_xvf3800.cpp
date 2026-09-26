@@ -8,6 +8,7 @@
 #include "esphome/core/hal.h"
 
 #include <cinttypes>
+#include <cmath>
 #include <cstring>
 
 namespace esphome {
@@ -70,8 +71,12 @@ void RespeakerXVF3800::loop() {
       break;
 
     default:
-      // Normal operation - no additional logic needed here
-      // Mute state is handled by the MuteSwitch component using GPO methods
+      // Poll one DSP parameter every 500 ms. Spreading the reads out avoids a
+      // burst of control traffic alongside the 10 Hz beam-direction polling.
+      if (!this->is_failed() && this->version_read_() && millis() - this->dsp_diagnostic_last_poll_ms_ >= 500) {
+        this->dsp_diagnostic_last_poll_ms_ = millis();
+        this->poll_next_dsp_diagnostic_();
+      }
       break;
   }
 }
@@ -494,7 +499,230 @@ void RespeakerXVF3800::unlock_beam() {
   ESP_LOGI(TAG, "Beam lock released");
 }
 
-void RespeakerXVF3800::xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num) {
+bool RespeakerXVF3800::set_pp_dt_sensitive(int32_t value) {
+  if (!((value >= 0 && value <= 5) || (value >= 10 && value <= 15))) {
+    ESP_LOGW(TAG, "Rejected PP_DTSENSITIVE=%" PRId32 " (valid: 0..5 or 10..15)", value);
+    return false;
+  }
+  this->dsp_cache_.pp_dt_sensitive_valid = false;
+  return this->write_int32_(PP_SERVICER_RESID, PP_DT_SENSITIVE_CMD, value);
+}
+
+bool RespeakerXVF3800::set_pp_mgscale_max(float value) {
+  float max_value, min_value, current_value;
+  if (!std::isfinite(value) || value < 1.0f || value > 100000.0f ||
+      !this->read_pp_mgscale_(max_value, min_value, current_value)) {
+    ESP_LOGW(TAG, "Unable to set PP_MGSCALE max to %.3f", value);
+    return false;
+  }
+  if (value < min_value) {
+    ESP_LOGW(TAG, "Rejected PP_MGSCALE max %.3f below current min %.3f", value, min_value);
+    return false;
+  }
+  const bool current_uses_max = std::fabs(current_value - max_value) <= std::fabs(current_value - min_value);
+  this->dsp_cache_.pp_mgscale_valid = false;
+  return this->write_pp_mgscale_(value, min_value, current_uses_max ? value : min_value);
+}
+
+bool RespeakerXVF3800::set_pp_mgscale_min(float value) {
+  float max_value, min_value, current_value;
+  if (!std::isfinite(value) || value < 0.0f || value > 100000.0f ||
+      !this->read_pp_mgscale_(max_value, min_value, current_value)) {
+    ESP_LOGW(TAG, "Unable to set PP_MGSCALE min to %.3f", value);
+    return false;
+  }
+  if (value > max_value) {
+    ESP_LOGW(TAG, "Rejected PP_MGSCALE min %.3f above current max %.3f", value, max_value);
+    return false;
+  }
+  const bool current_uses_max = std::fabs(current_value - max_value) <= std::fabs(current_value - min_value);
+  this->dsp_cache_.pp_mgscale_valid = false;
+  return this->write_pp_mgscale_(max_value, value, current_uses_max ? max_value : value);
+}
+
+bool RespeakerXVF3800::set_pp_echo_on(bool enabled) {
+  this->dsp_cache_.pp_echo_on_valid = false;
+  return this->write_int32_(PP_SERVICER_RESID, PP_ECHO_ONOFF_CMD, enabled ? 1 : 0);
+}
+
+bool RespeakerXVF3800::set_pp_nl_atten_on(bool enabled) {
+  this->dsp_cache_.pp_nl_atten_on_valid = false;
+  return this->write_int32_(PP_SERVICER_RESID, PP_NL_ATTEN_ONOFF_CMD, enabled ? 1 : 0);
+}
+
+bool RespeakerXVF3800::set_pp_min_ns(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 1.0f) return false;
+  this->dsp_cache_.pp_min_ns_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_MIN_NS_CMD, value);
+}
+
+bool RespeakerXVF3800::set_pp_min_nn(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 1.0f) return false;
+  this->dsp_cache_.pp_min_nn_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_MIN_NN_CMD, value);
+}
+
+bool RespeakerXVF3800::set_pp_gamma_e(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 2.0f) return false;
+  this->dsp_cache_.pp_gamma_e_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_GAMMA_E_CMD, value);
+}
+
+bool RespeakerXVF3800::set_pp_gamma_etail(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 2.0f) return false;
+  this->dsp_cache_.pp_gamma_etail_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_GAMMA_ETAIL_CMD, value);
+}
+
+bool RespeakerXVF3800::set_pp_gamma_enl(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 5.0f) return false;
+  this->dsp_cache_.pp_gamma_enl_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_GAMMA_ENL_CMD, value);
+}
+
+optional<bool> RespeakerXVF3800::get_aec_converged() const {
+  if (!this->dsp_cache_.aec_converged_valid) return {};
+  return this->dsp_cache_.aec_converged != 0;
+}
+
+optional<bool> RespeakerXVF3800::get_aec_path_change() const {
+  if (!this->dsp_cache_.aec_path_change_valid) return {};
+  return this->dsp_cache_.aec_path_change != 0;
+}
+
+optional<bool> RespeakerXVF3800::get_aec_asr_output_on() const {
+  if (!this->dsp_cache_.aec_asr_output_on_valid) return {};
+  return this->dsp_cache_.aec_asr_output_on != 0;
+}
+
+optional<float> RespeakerXVF3800::get_aec_asr_output_gain() const {
+  if (!this->dsp_cache_.aec_asr_output_gain_valid) return {};
+  return this->dsp_cache_.aec_asr_output_gain;
+}
+
+optional<std::string> RespeakerXVF3800::get_audio_mgr_op_l() const {
+  if (!this->dsp_cache_.audio_mgr_op_l_valid) return {};
+  return str_sprintf("category %u, source %u", this->dsp_cache_.audio_mgr_op_l[0],
+                     this->dsp_cache_.audio_mgr_op_l[1]);
+}
+
+optional<std::string> RespeakerXVF3800::get_audio_mgr_op_r() const {
+  if (!this->dsp_cache_.audio_mgr_op_r_valid) return {};
+  return str_sprintf("category %u, source %u", this->dsp_cache_.audio_mgr_op_r[0],
+                     this->dsp_cache_.audio_mgr_op_r[1]);
+}
+
+optional<std::string> RespeakerXVF3800::get_pp_dt_sensitive() const {
+  if (!this->dsp_cache_.pp_dt_sensitive_valid) return {};
+  return str_sprintf("%" PRId32, this->dsp_cache_.pp_dt_sensitive);
+}
+
+optional<float> RespeakerXVF3800::get_pp_mgscale_max() const {
+  if (!this->dsp_cache_.pp_mgscale_valid) return {};
+  return this->dsp_cache_.pp_mgscale[0];
+}
+
+optional<float> RespeakerXVF3800::get_pp_mgscale_min() const {
+  if (!this->dsp_cache_.pp_mgscale_valid) return {};
+  return this->dsp_cache_.pp_mgscale[1];
+}
+
+optional<float> RespeakerXVF3800::get_pp_mgscale_current() const {
+  if (!this->dsp_cache_.pp_mgscale_valid) return {};
+  return this->dsp_cache_.pp_mgscale[2];
+}
+
+optional<bool> RespeakerXVF3800::get_pp_echo_on() const {
+  if (!this->dsp_cache_.pp_echo_on_valid) return {};
+  return this->dsp_cache_.pp_echo_on != 0;
+}
+
+optional<bool> RespeakerXVF3800::get_pp_nl_atten_on() const {
+  if (!this->dsp_cache_.pp_nl_atten_on_valid) return {};
+  return this->dsp_cache_.pp_nl_atten_on != 0;
+}
+
+optional<float> RespeakerXVF3800::get_pp_min_ns() const {
+  if (!this->dsp_cache_.pp_min_ns_valid) return {};
+  return this->dsp_cache_.pp_min_ns;
+}
+
+optional<float> RespeakerXVF3800::get_pp_min_nn() const {
+  if (!this->dsp_cache_.pp_min_nn_valid) return {};
+  return this->dsp_cache_.pp_min_nn;
+}
+
+optional<float> RespeakerXVF3800::get_pp_gamma_e() const {
+  if (!this->dsp_cache_.pp_gamma_e_valid) return {};
+  return this->dsp_cache_.pp_gamma_e;
+}
+
+optional<float> RespeakerXVF3800::get_pp_gamma_etail() const {
+  if (!this->dsp_cache_.pp_gamma_etail_valid) return {};
+  return this->dsp_cache_.pp_gamma_etail;
+}
+
+optional<float> RespeakerXVF3800::get_pp_gamma_enl() const {
+  if (!this->dsp_cache_.pp_gamma_enl_valid) return {};
+  return this->dsp_cache_.pp_gamma_enl;
+}
+
+optional<float> RespeakerXVF3800::get_audio_mgr_mic_gain() const {
+  if (!this->dsp_cache_.audio_mgr_mic_gain_valid) return {};
+  return this->dsp_cache_.audio_mgr_mic_gain;
+}
+
+optional<float> RespeakerXVF3800::get_audio_mgr_ref_gain() const {
+  if (!this->dsp_cache_.audio_mgr_ref_gain_valid) return {};
+  return this->dsp_cache_.audio_mgr_ref_gain;
+}
+
+optional<float> RespeakerXVF3800::get_audio_mgr_sys_delay() const {
+  if (!this->dsp_cache_.audio_mgr_sys_delay_valid) return {};
+  return static_cast<float>(this->dsp_cache_.audio_mgr_sys_delay);
+}
+
+void RespeakerXVF3800::log_dsp_diagnostics() const {
+  if (this->dsp_cache_.aec_converged_valid && this->dsp_cache_.aec_path_change_valid &&
+      this->dsp_cache_.aec_asr_output_on_valid && this->dsp_cache_.aec_asr_output_gain_valid) {
+    ESP_LOGI("xvf_dsp", "AEC converged=%d path_change=%d ASR=%d gain=%.3f",
+             static_cast<int>(this->dsp_cache_.aec_converged), static_cast<int>(this->dsp_cache_.aec_path_change),
+             static_cast<int>(this->dsp_cache_.aec_asr_output_on), this->dsp_cache_.aec_asr_output_gain);
+  } else {
+    ESP_LOGI("xvf_dsp", "AEC readback pending");
+  }
+
+  if (this->dsp_cache_.pp_dt_sensitive_valid && this->dsp_cache_.pp_mgscale_valid &&
+      this->dsp_cache_.pp_echo_on_valid && this->dsp_cache_.pp_nl_atten_on_valid &&
+      this->dsp_cache_.pp_min_ns_valid && this->dsp_cache_.pp_min_nn_valid &&
+      this->dsp_cache_.pp_gamma_e_valid && this->dsp_cache_.pp_gamma_etail_valid &&
+      this->dsp_cache_.pp_gamma_enl_valid) {
+    ESP_LOGI("xvf_dsp",
+             "PP DT=%" PRId32 " MGSCALE=%.3f/%.3f/%.3f ECHO=%d NL=%d NS=%.3f NN=%.3f gamma=%.3f/%.3f/%.3f",
+             this->dsp_cache_.pp_dt_sensitive, this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1],
+             this->dsp_cache_.pp_mgscale[2], static_cast<int>(this->dsp_cache_.pp_echo_on),
+             static_cast<int>(this->dsp_cache_.pp_nl_atten_on), this->dsp_cache_.pp_min_ns,
+             this->dsp_cache_.pp_min_nn, this->dsp_cache_.pp_gamma_e, this->dsp_cache_.pp_gamma_etail,
+             this->dsp_cache_.pp_gamma_enl);
+  } else {
+    ESP_LOGI("xvf_dsp", "PP readback pending");
+  }
+
+  if (this->dsp_cache_.audio_mgr_op_l_valid && this->dsp_cache_.audio_mgr_op_r_valid &&
+      this->dsp_cache_.audio_mgr_mic_gain_valid && this->dsp_cache_.audio_mgr_ref_gain_valid &&
+      this->dsp_cache_.audio_mgr_sys_delay_valid) {
+    ESP_LOGI("xvf_dsp", "AUDIO OP_L=%u/%u OP_R=%u/%u mic=%.3f ref=%.3f delay=%" PRId32,
+             static_cast<unsigned>(this->dsp_cache_.audio_mgr_op_l[0]),
+             static_cast<unsigned>(this->dsp_cache_.audio_mgr_op_l[1]),
+             static_cast<unsigned>(this->dsp_cache_.audio_mgr_op_r[0]),
+             static_cast<unsigned>(this->dsp_cache_.audio_mgr_op_r[1]), this->dsp_cache_.audio_mgr_mic_gain,
+             this->dsp_cache_.audio_mgr_ref_gain, this->dsp_cache_.audio_mgr_sys_delay);
+  } else {
+    ESP_LOGI("xvf_dsp", "Audio Manager readback pending");
+  }
+}
+
+bool RespeakerXVF3800::xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_t *value, uint8_t write_byte_num) {
   uint8_t payload[3 + 255];
   payload[0] = resid;
   payload[1] = cmd;
@@ -508,7 +736,158 @@ void RespeakerXVF3800::xmos_write_bytes(uint8_t resid, uint8_t cmd, const uint8_
   
   if (err != i2c::ERROR_OK) {
     ESP_LOGW(TAG, "Error in xmos_write_bytes. resid=%d, cmd=%d, error=%d", resid, cmd, (int)err);
+    return false;
   }
+  return true;
+}
+
+bool RespeakerXVF3800::xmos_read_bytes_(uint8_t resid, uint8_t cmd, uint8_t *value, uint8_t read_byte_num) {
+  if (read_byte_num > 64) {
+    ESP_LOGW(TAG, "Refusing oversized XMOS read: %u bytes", read_byte_num);
+    return false;
+  }
+
+  const uint8_t request[] = {resid, static_cast<uint8_t>(cmd | I2C_COMMAND_READ_BIT),
+                             static_cast<uint8_t>(read_byte_num + 1)};
+  uint8_t response[65]{};
+  i2c::ErrorCode err = this->write_read(request, sizeof(request), response, read_byte_num + 1);
+  if (err != i2c::ERROR_OK) {
+    ESP_LOGW(TAG, "XMOS read failed. resid=%u cmd=%u error=%d", resid, cmd, (int) err);
+    return false;
+  }
+  if (response[0] == CTRL_WAIT || response[0] == SERVICER_COMMAND_RETRY) {
+    ESP_LOGD(TAG, "XMOS read busy. resid=%u cmd=%u status=0x%02X", resid, cmd, response[0]);
+    return false;
+  }
+  if (response[0] != CTRL_DONE) {
+    ESP_LOGW(TAG, "XMOS read returned status 0x%02X. resid=%u cmd=%u", response[0], resid, cmd);
+    return false;
+  }
+  memcpy(value, &response[1], read_byte_num);
+  return true;
+}
+
+bool RespeakerXVF3800::read_int32_(uint8_t resid, uint8_t cmd, int32_t &value) {
+  uint8_t bytes[sizeof(value)];
+  if (!this->xmos_read_bytes_(resid, cmd, bytes, sizeof(bytes))) return false;
+  memcpy(&value, bytes, sizeof(value));
+  return true;
+}
+
+bool RespeakerXVF3800::read_float_(uint8_t resid, uint8_t cmd, float &value) {
+  uint8_t bytes[sizeof(value)];
+  if (!this->xmos_read_bytes_(resid, cmd, bytes, sizeof(bytes))) return false;
+  memcpy(&value, bytes, sizeof(value));
+  return true;
+}
+
+bool RespeakerXVF3800::write_int32_(uint8_t resid, uint8_t cmd, int32_t value) {
+  uint8_t bytes[sizeof(value)];
+  memcpy(bytes, &value, sizeof(value));
+  return this->xmos_write_bytes(resid, cmd, bytes, sizeof(bytes));
+}
+
+bool RespeakerXVF3800::write_float_(uint8_t resid, uint8_t cmd, float value) {
+  uint8_t bytes[sizeof(value)];
+  memcpy(bytes, &value, sizeof(value));
+  return this->xmos_write_bytes(resid, cmd, bytes, sizeof(bytes));
+}
+
+bool RespeakerXVF3800::read_pp_mgscale_(float &max_value, float &min_value, float &current_value) {
+  uint8_t bytes[3 * sizeof(float)];
+  if (!this->xmos_read_bytes_(PP_SERVICER_RESID, PP_MGSCALE_CMD, bytes, sizeof(bytes))) return false;
+  memcpy(&max_value, &bytes[0], sizeof(float));
+  memcpy(&min_value, &bytes[sizeof(float)], sizeof(float));
+  memcpy(&current_value, &bytes[2 * sizeof(float)], sizeof(float));
+  return true;
+}
+
+bool RespeakerXVF3800::write_pp_mgscale_(float max_value, float min_value, float current_value) {
+  uint8_t bytes[3 * sizeof(float)];
+  memcpy(&bytes[0], &max_value, sizeof(float));
+  memcpy(&bytes[sizeof(float)], &min_value, sizeof(float));
+  memcpy(&bytes[2 * sizeof(float)], &current_value, sizeof(float));
+  return this->xmos_write_bytes(PP_SERVICER_RESID, PP_MGSCALE_CMD, bytes, sizeof(bytes));
+}
+
+void RespeakerXVF3800::poll_next_dsp_diagnostic_() {
+  switch (this->dsp_diagnostic_poll_index_) {
+    case 0:
+      this->dsp_cache_.aec_path_change_valid =
+          this->read_int32_(AEC_SERVICER_RESID, AEC_PATH_CHANGE_CMD, this->dsp_cache_.aec_path_change);
+      break;
+    case 1:
+      this->dsp_cache_.aec_converged_valid =
+          this->read_int32_(AEC_SERVICER_RESID, AEC_CONVERGED_CMD, this->dsp_cache_.aec_converged);
+      break;
+    case 2:
+      this->dsp_cache_.aec_asr_output_on_valid = this->read_int32_(
+          AEC_SERVICER_RESID, AEC_ASR_OUTPUT_ONOFF_CMD, this->dsp_cache_.aec_asr_output_on);
+      break;
+    case 3:
+      this->dsp_cache_.aec_asr_output_gain_valid = this->read_float_(
+          AEC_SERVICER_RESID, AEC_ASR_OUTPUT_GAIN_CMD, this->dsp_cache_.aec_asr_output_gain);
+      break;
+    case 4:
+      this->dsp_cache_.audio_mgr_op_l_valid = this->xmos_read_bytes_(
+          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_L_CMD, this->dsp_cache_.audio_mgr_op_l, 2);
+      break;
+    case 5:
+      this->dsp_cache_.audio_mgr_op_r_valid = this->xmos_read_bytes_(
+          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_R_CMD, this->dsp_cache_.audio_mgr_op_r, 2);
+      break;
+    case 6:
+      this->dsp_cache_.pp_dt_sensitive_valid = this->read_int32_(
+          PP_SERVICER_RESID, PP_DT_SENSITIVE_CMD, this->dsp_cache_.pp_dt_sensitive);
+      break;
+    case 7:
+      this->dsp_cache_.pp_mgscale_valid = this->read_pp_mgscale_(
+          this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1], this->dsp_cache_.pp_mgscale[2]);
+      break;
+    case 8:
+      this->dsp_cache_.pp_echo_on_valid =
+          this->read_int32_(PP_SERVICER_RESID, PP_ECHO_ONOFF_CMD, this->dsp_cache_.pp_echo_on);
+      break;
+    case 9:
+      this->dsp_cache_.pp_nl_atten_on_valid = this->read_int32_(
+          PP_SERVICER_RESID, PP_NL_ATTEN_ONOFF_CMD, this->dsp_cache_.pp_nl_atten_on);
+      break;
+    case 10:
+      this->dsp_cache_.pp_min_ns_valid =
+          this->read_float_(PP_SERVICER_RESID, PP_MIN_NS_CMD, this->dsp_cache_.pp_min_ns);
+      break;
+    case 11:
+      this->dsp_cache_.pp_min_nn_valid =
+          this->read_float_(PP_SERVICER_RESID, PP_MIN_NN_CMD, this->dsp_cache_.pp_min_nn);
+      break;
+    case 12:
+      this->dsp_cache_.pp_gamma_e_valid =
+          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_E_CMD, this->dsp_cache_.pp_gamma_e);
+      break;
+    case 13:
+      this->dsp_cache_.pp_gamma_etail_valid =
+          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ETAIL_CMD, this->dsp_cache_.pp_gamma_etail);
+      break;
+    case 14:
+      this->dsp_cache_.pp_gamma_enl_valid =
+          this->read_float_(PP_SERVICER_RESID, PP_GAMMA_ENL_CMD, this->dsp_cache_.pp_gamma_enl);
+      break;
+    case 15:
+      this->dsp_cache_.audio_mgr_mic_gain_valid = this->read_float_(
+          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_MIC_GAIN_CMD, this->dsp_cache_.audio_mgr_mic_gain);
+      break;
+    case 16:
+      this->dsp_cache_.audio_mgr_ref_gain_valid = this->read_float_(
+          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_REF_GAIN_CMD, this->dsp_cache_.audio_mgr_ref_gain);
+      break;
+    case 17:
+      this->dsp_cache_.audio_mgr_sys_delay_valid = this->read_int32_(
+          AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_SYS_DELAY_CMD, this->dsp_cache_.audio_mgr_sys_delay);
+      break;
+    default:
+      break;
+  }
+  this->dsp_diagnostic_poll_index_ = (this->dsp_diagnostic_poll_index_ + 1) % 18;
 }
 
 void RespeakerXVF3800::set_led_ring(uint32_t *rgb_array) {
