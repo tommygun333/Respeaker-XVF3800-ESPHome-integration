@@ -272,6 +272,11 @@ media_player:
       # Turn on amplifier when announcement starts.
       - switch.turn_on: amplifier_enable
 
+    # Normal media playback does not use the announcement pipeline, so it
+    # needs to enable the amplifier independently.
+    on_play:
+      - switch.turn_on: amplifier_enable
+
     on_idle:
       # -----------------------------------------------------------------------
       # Timing diagnostic:
@@ -302,6 +307,8 @@ media_player:
                 voice_assistant.is_running:
             - not:
                 media_player.is_announcing: external_media_player
+            - not:
+                media_player.is_playing: external_media_player
         then:
           - mixer_speaker.apply_ducking:
               id: media_mixing_input
@@ -317,6 +324,8 @@ media_player:
                 and:
                   - not:
                       media_player.is_announcing: external_media_player
+                  - not:
+                      media_player.is_playing: external_media_player
                   - not:
                       voice_assistant.is_running:
               then:
@@ -759,6 +768,8 @@ voice_assistant:
           and:
             - not:
                 media_player.is_announcing: external_media_player
+            - not:
+                media_player.is_playing: external_media_player
             - not:
                 voice_assistant.is_running:
         then:
