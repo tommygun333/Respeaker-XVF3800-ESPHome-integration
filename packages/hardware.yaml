@@ -188,6 +188,59 @@ switch:
 
 select:
   - platform: template
+    id: aec_hpf_mode
+    name: "XVF3800 Microphone High-Pass Filter"
+    icon: mdi:filter
+    entity_category: config
+    update_interval: 5s
+    options:
+      - "Off"
+      - "70 Hz"
+      - "125 Hz"
+      - "150 Hz"
+      - "180 Hz"
+    lambda: return id(respeaker).get_aec_hpf_mode();
+    set_action:
+      - lambda: |-
+          if (x == "Off") id(respeaker).set_aec_hpf_mode(0);
+          else if (x == "70 Hz") id(respeaker).set_aec_hpf_mode(1);
+          else if (x == "125 Hz") id(respeaker).set_aec_hpf_mode(2);
+          else if (x == "150 Hz") id(respeaker).set_aec_hpf_mode(3);
+          else if (x == "180 Hz") id(respeaker).set_aec_hpf_mode(4);
+
+  - platform: template
+    id: aec_emphasis_mode
+    name: "XVF3800 AEC Emphasis"
+    icon: mdi:waveform
+    entity_category: config
+    update_interval: 5s
+    options:
+      - "Off"
+      - "On"
+      - "On EQ"
+    lambda: return id(respeaker).get_aec_emphasis_mode();
+    set_action:
+      - lambda: |-
+          if (x == "Off") id(respeaker).set_aec_emphasis_mode(0);
+          else if (x == "On") id(respeaker).set_aec_emphasis_mode(1);
+          else if (x == "On EQ") id(respeaker).set_aec_emphasis_mode(2);
+
+  # Current upstream route control, but with real XVF3800 readback rather than
+  # optimistic state. channel 0 -> STT; channel 1 -> micro_wake_word.
+  - platform: template
+    id: dsp_route
+    name: "DSP route"
+    icon: mdi:call-split
+    entity_category: config
+    update_interval: 5s
+    options:
+      - "ASR to STT and wake word"
+      - "Comms to STT, ASR to wake word"
+    lambda: return id(respeaker).get_asr_route();
+    set_action:
+      - lambda: id(respeaker).set_asr_route(i == 0);
+
+  - platform: template
     id: pp_dt_sensitive
     name: "XVF3800 Double-Talk Sensitivity"
     icon: mdi:account-voice
@@ -214,6 +267,96 @@ select:
 
 
 number:
+  # ASR tap consumed by micro_wake_word. Protocol range is 0..1000 linear,
+  # but keep the UI deliberately conservative for tuning.
+  - platform: template
+    id: aec_asr_output_gain
+    name: "XVF3800 ASR Output Gain"
+    icon: mdi:amplifier
+    entity_category: config
+    update_interval: 5s
+    min_value: 0
+    max_value: 8
+    step: 0.1
+    mode: slider
+    lambda: return id(respeaker).get_aec_asr_output_gain();
+    set_action:
+      - lambda: id(respeaker).set_aec_asr_output_gain(x);
+
+  - platform: template
+    id: audio_mgr_mic_gain
+    name: "XVF3800 Microphone Gain"
+    icon: mdi:microphone-plus
+    entity_category: config
+    update_interval: 5s
+    min_value: 1
+    max_value: 200
+    step: 1
+    mode: box
+    lambda: return id(respeaker).get_audio_mgr_mic_gain();
+    set_action:
+      - lambda: id(respeaker).set_audio_mgr_mic_gain(x);
+
+  - platform: template
+    id: audio_mgr_ref_gain
+    name: "XVF3800 Reference Gain"
+    icon: mdi:volume-plus
+    entity_category: config
+    update_interval: 5s
+    min_value: 0.1
+    max_value: 32
+    step: 0.1
+    mode: box
+    lambda: return id(respeaker).get_audio_mgr_ref_gain();
+    set_action:
+      - lambda: id(respeaker).set_audio_mgr_ref_gain(x);
+
+  - platform: template
+    id: audio_mgr_sys_delay
+    name: "XVF3800 System Delay"
+    icon: mdi:timer-sand
+    entity_category: config
+    update_interval: 5s
+    min_value: -64
+    max_value: 256
+    step: 1
+    mode: box
+    unit_of_measurement: samples
+    lambda: return id(respeaker).get_audio_mgr_sys_delay();
+    set_action:
+      - lambda: id(respeaker).set_audio_mgr_sys_delay((int32_t) x);
+
+  - platform: template
+    id: aec_far_ext_gain
+    name: "XVF3800 Far-End External Gain"
+    icon: mdi:volume-high
+    entity_category: config
+    update_interval: 5s
+    min_value: -30
+    max_value: 30
+    step: 0.5
+    mode: box
+    unit_of_measurement: dB
+    lambda: return id(respeaker).get_aec_far_ext_gain();
+    set_action:
+      - lambda: id(respeaker).set_aec_far_ext_gain(x);
+
+  # Missing upstream #62 control for the comms/STT path. This does not change
+  # the ASR wake-word channel, but keeps the fork functionally current.
+  - platform: template
+    id: pp_agc_max_gain
+    name: "AGC max gain (comms)"
+    icon: mdi:auto-fix
+    entity_category: config
+    update_interval: 5s
+    min_value: 1
+    max_value: 1000
+    step: 1
+    mode: box
+    lambda: return id(respeaker).get_pp_agc_max_gain();
+    set_action:
+      - lambda: id(respeaker).set_pp_agc_max_gain(x);
+
   # PP_MGSCALE is one atomic (max,min,current) tuple in XMOS. The component
   # performs read-modify-write and preserves whether current was max or min.
   - platform: template
@@ -343,39 +486,6 @@ sensor:
     update_interval: 5s
     accuracy_decimals: 3
     lambda: return id(respeaker).get_pp_mgscale_current();
-
-  - platform: template
-    name: "XVF3800 ASR Output Gain"
-    icon: mdi:amplifier
-    entity_category: diagnostic
-    update_interval: 5s
-    accuracy_decimals: 3
-    lambda: return id(respeaker).get_aec_asr_output_gain();
-
-  - platform: template
-    name: "XVF3800 Microphone Gain"
-    icon: mdi:microphone-plus
-    entity_category: diagnostic
-    update_interval: 5s
-    accuracy_decimals: 3
-    lambda: return id(respeaker).get_audio_mgr_mic_gain();
-
-  - platform: template
-    name: "XVF3800 Reference Gain"
-    icon: mdi:volume-plus
-    entity_category: diagnostic
-    update_interval: 5s
-    accuracy_decimals: 3
-    lambda: return id(respeaker).get_audio_mgr_ref_gain();
-
-  - platform: template
-    name: "XVF3800 System Delay"
-    icon: mdi:timer-sand
-    entity_category: diagnostic
-    update_interval: 5s
-    accuracy_decimals: 0
-    unit_of_measurement: samples
-    lambda: return id(respeaker).get_audio_mgr_sys_delay();
 
 
 text_sensor:

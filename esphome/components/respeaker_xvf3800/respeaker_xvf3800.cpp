@@ -500,6 +500,91 @@ void RespeakerXVF3800::unlock_beam() {
   ESP_LOGI(TAG, "Beam lock released");
 }
 
+bool RespeakerXVF3800::set_aec_hpf_mode(int32_t value) {
+  if (value < 0 || value > 4) {
+    ESP_LOGW(TAG, "Rejected AEC_HPFONOFF=%" PRId32 " (valid: 0..4)", value);
+    return false;
+  }
+  this->dsp_cache_.aec_hpf_valid = false;
+  return this->write_int32_(AEC_SERVICER_RESID, AEC_HPF_ONOFF_CMD, value);
+}
+
+bool RespeakerXVF3800::set_aec_emphasis_mode(int32_t value) {
+  if (value < 0 || value > 2) {
+    ESP_LOGW(TAG, "Rejected AEC_AECEMPHASISONOFF=%" PRId32 " (valid: 0..2)", value);
+    return false;
+  }
+  this->dsp_cache_.aec_emphasis_valid = false;
+  return this->write_int32_(AEC_SERVICER_RESID, AEC_EMPHASIS_ONOFF_CMD, value);
+}
+
+bool RespeakerXVF3800::set_aec_far_ext_gain(float value) {
+  if (!std::isfinite(value)) return false;
+  this->dsp_cache_.aec_far_ext_gain_valid = false;
+  return this->write_float_(AEC_SERVICER_RESID, AEC_FAR_EXT_GAIN_CMD, value);
+}
+
+bool RespeakerXVF3800::set_aec_asr_output_gain(float value) {
+  if (!std::isfinite(value) || value < 0.0f || value > 1000.0f) {
+    ESP_LOGW(TAG, "Rejected AEC_ASROUTGAIN=%.3f (valid: 0..1000)", value);
+    return false;
+  }
+  this->dsp_cache_.aec_asr_output_gain_valid = false;
+  return this->write_float_(AEC_SERVICER_RESID, AEC_ASR_OUTPUT_GAIN_CMD, value);
+}
+
+bool RespeakerXVF3800::set_audio_mgr_mic_gain(float value) {
+  if (!std::isfinite(value) || value <= 0.0f) return false;
+  this->dsp_cache_.audio_mgr_mic_gain_valid = false;
+  return this->write_float_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_MIC_GAIN_CMD, value);
+}
+
+bool RespeakerXVF3800::set_audio_mgr_ref_gain(float value) {
+  if (!std::isfinite(value) || value <= 0.0f) return false;
+  this->dsp_cache_.audio_mgr_ref_gain_valid = false;
+  return this->write_float_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_REF_GAIN_CMD, value);
+}
+
+bool RespeakerXVF3800::set_audio_mgr_sys_delay(int32_t value) {
+  if (value < -64 || value > 256) {
+    ESP_LOGW(TAG, "Rejected AUDIO_MGR_SYS_DELAY=%" PRId32 " (valid: -64..256)", value);
+    return false;
+  }
+  this->dsp_cache_.audio_mgr_sys_delay_valid = false;
+  return this->write_int32_(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_SYS_DELAY_CMD, value);
+}
+
+bool RespeakerXVF3800::set_asr_route(bool asr_route) {
+  // Category 7/source 3 is the ASR auto-select beam when ASROUTONOFF=1.
+  // Keep wake word on R=7/3. Only L (STT) changes between comms and ASR.
+  if (!this->write_int32_(AEC_SERVICER_RESID, AEC_ASR_OUTPUT_ONOFF_CMD, 1)) return false;
+
+  const uint8_t left[2] = {
+      static_cast<uint8_t>(asr_route ? 7 : 8),
+      static_cast<uint8_t>(asr_route ? 3 : 0),
+  };
+  const uint8_t right[2] = {7, 3};
+
+  const bool left_ok =
+      this->xmos_write_bytes(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_L_CMD, left, sizeof(left));
+  const bool right_ok =
+      this->xmos_write_bytes(AUDIO_MGR_SERVICER_RESID, AUDIO_MGR_OP_R_CMD, right, sizeof(right));
+
+  this->dsp_cache_.aec_asr_output_on_valid = false;
+  this->dsp_cache_.audio_mgr_op_l_valid = false;
+  this->dsp_cache_.audio_mgr_op_r_valid = false;
+  return left_ok && right_ok;
+}
+
+bool RespeakerXVF3800::set_pp_agc_max_gain(float value) {
+  if (!std::isfinite(value) || value < 1.0f || value > 1000.0f) {
+    ESP_LOGW(TAG, "Rejected PP_AGCMAXGAIN=%.3f (valid: 1..1000)", value);
+    return false;
+  }
+  this->dsp_cache_.pp_agc_max_gain_valid = false;
+  return this->write_float_(PP_SERVICER_RESID, PP_AGC_MAX_GAIN_CMD, value);
+}
+
 bool RespeakerXVF3800::set_pp_dt_sensitive(int32_t value) {
   if (!((value >= 0 && value <= 5) || (value >= 10 && value <= 15))) {
     ESP_LOGW(TAG, "Rejected PP_DTSENSITIVE=%" PRId32 " (valid: 0..5 or 10..15)", value);
@@ -603,6 +688,59 @@ optional<float> RespeakerXVF3800::get_aec_asr_output_gain() const {
   return this->dsp_cache_.aec_asr_output_gain;
 }
 
+optional<std::string> RespeakerXVF3800::get_aec_hpf_mode() const {
+  if (!this->dsp_cache_.aec_hpf_valid) return {};
+  switch (this->dsp_cache_.aec_hpf) {
+    case 0: return std::string("Off");
+    case 1: return std::string("70 Hz");
+    case 2: return std::string("125 Hz");
+    case 3: return std::string("150 Hz");
+    case 4: return std::string("180 Hz");
+    default: return {};
+  }
+}
+
+optional<std::string> RespeakerXVF3800::get_aec_emphasis_mode() const {
+  if (!this->dsp_cache_.aec_emphasis_valid) return {};
+  switch (this->dsp_cache_.aec_emphasis) {
+    case 0: return std::string("Off");
+    case 1: return std::string("On");
+    case 2: return std::string("On EQ");
+    default: return {};
+  }
+}
+
+optional<float> RespeakerXVF3800::get_aec_far_ext_gain() const {
+  if (!this->dsp_cache_.aec_far_ext_gain_valid) return {};
+  return this->dsp_cache_.aec_far_ext_gain;
+}
+
+optional<std::string> RespeakerXVF3800::get_asr_route() const {
+  if (!this->dsp_cache_.aec_asr_output_on_valid ||
+      !this->dsp_cache_.audio_mgr_op_l_valid ||
+      !this->dsp_cache_.audio_mgr_op_r_valid) {
+    return {};
+  }
+
+  if (this->dsp_cache_.aec_asr_output_on != 1 ||
+      this->dsp_cache_.audio_mgr_op_r[0] != 7 ||
+      this->dsp_cache_.audio_mgr_op_r[1] != 3) {
+    return {};
+  }
+
+  if (this->dsp_cache_.audio_mgr_op_l[0] == 7 &&
+      this->dsp_cache_.audio_mgr_op_l[1] == 3) {
+    return std::string("ASR to STT and wake word");
+  }
+
+  if (this->dsp_cache_.audio_mgr_op_l[0] == 8 &&
+      this->dsp_cache_.audio_mgr_op_l[1] == 0) {
+    return std::string("Comms to STT, ASR to wake word");
+  }
+
+  return {};
+}
+
 optional<std::string> RespeakerXVF3800::get_audio_mgr_op_l() const {
   if (!this->dsp_cache_.audio_mgr_op_l_valid) return {};
   return str_sprintf("category %u, source %u", this->dsp_cache_.audio_mgr_op_l[0],
@@ -670,6 +808,11 @@ optional<float> RespeakerXVF3800::get_pp_gamma_enl() const {
   return this->dsp_cache_.pp_gamma_enl;
 }
 
+optional<float> RespeakerXVF3800::get_pp_agc_max_gain() const {
+  if (!this->dsp_cache_.pp_agc_max_gain_valid) return {};
+  return this->dsp_cache_.pp_agc_max_gain;
+}
+
 optional<float> RespeakerXVF3800::get_audio_mgr_mic_gain() const {
   if (!this->dsp_cache_.audio_mgr_mic_gain_valid) return {};
   return this->dsp_cache_.audio_mgr_mic_gain;
@@ -687,22 +830,29 @@ optional<float> RespeakerXVF3800::get_audio_mgr_sys_delay() const {
 
 void RespeakerXVF3800::log_dsp_diagnostics() const {
   if (this->dsp_cache_.aec_converged_valid && this->dsp_cache_.aec_path_change_valid &&
-      this->dsp_cache_.aec_asr_output_on_valid && this->dsp_cache_.aec_asr_output_gain_valid) {
-    ESP_LOGI("xvf_dsp", "AEC converged=%d path_change=%d ASR=%d gain=%.3f",
+      this->dsp_cache_.aec_asr_output_on_valid && this->dsp_cache_.aec_asr_output_gain_valid &&
+      this->dsp_cache_.aec_hpf_valid && this->dsp_cache_.aec_emphasis_valid &&
+      this->dsp_cache_.aec_far_ext_gain_valid) {
+    ESP_LOGI("xvf_dsp",
+             "AEC converged=%d path_change=%d ASR=%d gain=%.3f HPF=%" PRId32
+             " emphasis=%" PRId32 " far_ext=%.2fdB",
              static_cast<int>(this->dsp_cache_.aec_converged), static_cast<int>(this->dsp_cache_.aec_path_change),
-             static_cast<int>(this->dsp_cache_.aec_asr_output_on), this->dsp_cache_.aec_asr_output_gain);
+             static_cast<int>(this->dsp_cache_.aec_asr_output_on), this->dsp_cache_.aec_asr_output_gain,
+             this->dsp_cache_.aec_hpf, this->dsp_cache_.aec_emphasis, this->dsp_cache_.aec_far_ext_gain);
   } else {
     ESP_LOGI("xvf_dsp", "AEC readback pending");
   }
 
-  if (this->dsp_cache_.pp_dt_sensitive_valid && this->dsp_cache_.pp_mgscale_valid &&
-      this->dsp_cache_.pp_echo_on_valid && this->dsp_cache_.pp_nl_atten_on_valid &&
+  if (this->dsp_cache_.pp_dt_sensitive_valid && this->dsp_cache_.pp_agc_max_gain_valid &&
+      this->dsp_cache_.pp_mgscale_valid && this->dsp_cache_.pp_echo_on_valid &&
+      this->dsp_cache_.pp_nl_atten_on_valid &&
       this->dsp_cache_.pp_min_ns_valid && this->dsp_cache_.pp_min_nn_valid &&
       this->dsp_cache_.pp_gamma_e_valid && this->dsp_cache_.pp_gamma_etail_valid &&
       this->dsp_cache_.pp_gamma_enl_valid) {
     ESP_LOGI("xvf_dsp",
-             "PP DT=%" PRId32 " MGSCALE=%.3f/%.3f/%.3f ECHO=%d NL=%d NS=%.3f NN=%.3f gamma=%.3f/%.3f/%.3f",
-             this->dsp_cache_.pp_dt_sensitive, this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1],
+             "PP DT=%" PRId32 " AGCMAX=%.3f MGSCALE=%.3f/%.3f/%.3f ECHO=%d NL=%d NS=%.3f NN=%.3f gamma=%.3f/%.3f/%.3f",
+             this->dsp_cache_.pp_dt_sensitive, this->dsp_cache_.pp_agc_max_gain,
+             this->dsp_cache_.pp_mgscale[0], this->dsp_cache_.pp_mgscale[1],
              this->dsp_cache_.pp_mgscale[2], static_cast<int>(this->dsp_cache_.pp_echo_on),
              static_cast<int>(this->dsp_cache_.pp_nl_atten_on), this->dsp_cache_.pp_min_ns,
              this->dsp_cache_.pp_min_nn, this->dsp_cache_.pp_gamma_e, this->dsp_cache_.pp_gamma_etail,
@@ -896,6 +1046,22 @@ void RespeakerXVF3800::poll_next_dsp_diagnostic_() {
                                   this->dsp_cache_.audio_mgr_sys_delay);
       if (success) this->dsp_cache_.audio_mgr_sys_delay_valid = true;
       break;
+    case 18:
+      success = this->read_int32_(AEC_SERVICER_RESID, AEC_HPF_ONOFF_CMD, this->dsp_cache_.aec_hpf);
+      if (success) this->dsp_cache_.aec_hpf_valid = true;
+      break;
+    case 19:
+      success = this->read_int32_(AEC_SERVICER_RESID, AEC_EMPHASIS_ONOFF_CMD, this->dsp_cache_.aec_emphasis);
+      if (success) this->dsp_cache_.aec_emphasis_valid = true;
+      break;
+    case 20:
+      success = this->read_float_(AEC_SERVICER_RESID, AEC_FAR_EXT_GAIN_CMD, this->dsp_cache_.aec_far_ext_gain);
+      if (success) this->dsp_cache_.aec_far_ext_gain_valid = true;
+      break;
+    case 21:
+      success = this->read_float_(PP_SERVICER_RESID, PP_AGC_MAX_GAIN_CMD, this->dsp_cache_.pp_agc_max_gain);
+      if (success) this->dsp_cache_.pp_agc_max_gain_valid = true;
+      break;
     default:
       break;
   }
@@ -904,15 +1070,15 @@ void RespeakerXVF3800::poll_next_dsp_diagnostic_() {
 
   if (success || ++this->dsp_diagnostic_retry_count_ >= 100) {
     this->dsp_diagnostic_retry_count_ = 0;
-    this->dsp_diagnostic_poll_index_ = (this->dsp_diagnostic_poll_index_ + 1) % 18;
+    this->dsp_diagnostic_poll_index_ = (this->dsp_diagnostic_poll_index_ + 1) % 22;
 
     if (this->dsp_diagnostic_poll_index_ == 0) {
       uint8_t valid_count = 0;
-      for (uint8_t i = 0; i < 18; i++) {
+      for (uint8_t i = 0; i < 22; i++) {
         if (this->dsp_diagnostic_valid_mask_ & (1UL << i)) valid_count++;
       }
       if (valid_count != this->dsp_diagnostic_last_valid_count_) {
-        ESP_LOGI(TAG, "XVF3800 DSP readback: %u/18 parameters available", static_cast<unsigned>(valid_count));
+        ESP_LOGI(TAG, "XVF3800 DSP readback: %u/22 parameters available", static_cast<unsigned>(valid_count));
         this->dsp_diagnostic_last_valid_count_ = valid_count;
       }
     }

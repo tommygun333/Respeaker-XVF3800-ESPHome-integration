@@ -42,7 +42,10 @@ const uint8_t GPO_GPO_READ_NUM_BYTES = 5;
 // AEC Azimuth constants for LED beam sensor
 const uint8_t AEC_SERVICER_RESID = 33;
 const uint8_t AEC_PATH_CHANGE_CMD = 0;
+const uint8_t AEC_HPF_ONOFF_CMD = 1;
 const uint8_t AEC_CONVERGED_CMD = 3;
+const uint8_t AEC_EMPHASIS_ONOFF_CMD = 4;
+const uint8_t AEC_FAR_EXT_GAIN_CMD = 5;
 const uint8_t AEC_ASR_OUTPUT_ONOFF_CMD = 35;
 const uint8_t AEC_ASR_OUTPUT_GAIN_CMD = 36;
 const uint8_t AEC_AZIMUTH_VALUES_CMD = 75;
@@ -57,6 +60,7 @@ const uint8_t AEC_FIXEDBEAMS_AZIMUTH_CMD = 81;
 // map / the official xvf_host.py table. Keep these at the XMOS firmware
 // defaults unless an exposed control is deliberately changed by the user.
 const uint8_t PP_SERVICER_RESID = 17;
+const uint8_t PP_AGC_MAX_GAIN_CMD = 11;
 const uint8_t PP_MIN_NS_CMD = 21;
 const uint8_t PP_MIN_NN_CMD = 22;
 const uint8_t PP_ECHO_ONOFF_CMD = 23;
@@ -270,6 +274,15 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
 
   // DSP tuning controls. Every value exposed to Home Assistant is read back
   // from the XVF3800; these setters never install an experimental boot preset.
+  bool set_aec_hpf_mode(int32_t value);
+  bool set_aec_emphasis_mode(int32_t value);
+  bool set_aec_far_ext_gain(float value);
+  bool set_aec_asr_output_gain(float value);
+  bool set_audio_mgr_mic_gain(float value);
+  bool set_audio_mgr_ref_gain(float value);
+  bool set_audio_mgr_sys_delay(int32_t value);
+  bool set_asr_route(bool asr_route);
+  bool set_pp_agc_max_gain(float value);
   bool set_pp_dt_sensitive(int32_t value);
   bool set_pp_mgscale_max(float value);
   bool set_pp_mgscale_min(float value);
@@ -288,6 +301,10 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   optional<bool> get_aec_path_change() const;
   optional<bool> get_aec_asr_output_on() const;
   optional<float> get_aec_asr_output_gain() const;
+  optional<std::string> get_aec_hpf_mode() const;
+  optional<std::string> get_aec_emphasis_mode() const;
+  optional<float> get_aec_far_ext_gain() const;
+  optional<std::string> get_asr_route() const;
   optional<std::string> get_audio_mgr_op_l() const;
   optional<std::string> get_audio_mgr_op_r() const;
   optional<std::string> get_pp_dt_sensitive() const;
@@ -301,6 +318,7 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   optional<float> get_pp_gamma_e() const;
   optional<float> get_pp_gamma_etail() const;
   optional<float> get_pp_gamma_enl() const;
+  optional<float> get_pp_agc_max_gain() const;
   optional<float> get_audio_mgr_mic_gain() const;
   optional<float> get_audio_mgr_ref_gain() const;
   optional<float> get_audio_mgr_sys_delay() const;
@@ -378,8 +396,14 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   struct DspDiagnosticCache {
     bool aec_path_change_valid{false};
     int32_t aec_path_change{0};
+    bool aec_hpf_valid{false};
+    int32_t aec_hpf{0};
     bool aec_converged_valid{false};
     int32_t aec_converged{0};
+    bool aec_emphasis_valid{false};
+    int32_t aec_emphasis{0};
+    bool aec_far_ext_gain_valid{false};
+    float aec_far_ext_gain{0.0f};
     bool aec_asr_output_on_valid{false};
     int32_t aec_asr_output_on{0};
     bool aec_asr_output_gain_valid{false};
@@ -390,6 +414,8 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
     uint8_t audio_mgr_op_r[2]{};
     bool pp_dt_sensitive_valid{false};
     int32_t pp_dt_sensitive{0};
+    bool pp_agc_max_gain_valid{false};
+    float pp_agc_max_gain{0.0f};
     bool pp_mgscale_valid{false};
     float pp_mgscale[3]{};
     bool pp_echo_on_valid{false};
