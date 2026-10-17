@@ -239,7 +239,7 @@ select:
     lambda: return id(respeaker).get_asr_route();
     set_action:
       - lambda: |-
-      id(respeaker).set_asr_route(x == "ASR to STT and wake word");
+          id(respeaker).set_asr_route(x == "ASR to STT and wake word");
 
   - platform: template
     id: pp_dt_sensitive
