@@ -157,7 +157,6 @@ api:
             setenv("TZ", posix_time_zone.c_str(), 1);
             tzset();
             id(saved_time_zone) = posix_time_zone;
-            id(publish_current_time).execute();
   on_client_connected:
     - script.execute: control_leds
   on_client_disconnected:
