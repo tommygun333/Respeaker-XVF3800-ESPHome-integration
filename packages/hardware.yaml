@@ -116,8 +116,9 @@ respeaker_xvf3800:
                 priority: false
                 sound_file: "mute_switch_off_sound"
   dfu_version:
+    id: dfu_version_sensor
     name: "Firmware Version"
-    update_interval: 120s
+    update_interval: never
   led_beam_sensor:
     name: "Voice Beam Direction"
     id: beam_direction
@@ -192,7 +193,7 @@ select:
     name: "XVF3800 Microphone High-Pass Filter"
     icon: mdi:filter
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     options:
       - "Off"
       - "70 Hz"
@@ -207,13 +208,14 @@ select:
           else if (x == "125 Hz") id(respeaker).set_aec_hpf_mode(2);
           else if (x == "150 Hz") id(respeaker).set_aec_hpf_mode(3);
           else if (x == "180 Hz") id(respeaker).set_aec_hpf_mode(4);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: aec_emphasis_mode
     name: "XVF3800 AEC Emphasis"
     icon: mdi:waveform
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     options:
       - "Off"
       - "On"
@@ -224,6 +226,7 @@ select:
           if (x == "Off") id(respeaker).set_aec_emphasis_mode(0);
           else if (x == "On") id(respeaker).set_aec_emphasis_mode(1);
           else if (x == "On EQ") id(respeaker).set_aec_emphasis_mode(2);
+      - script.execute: refresh_xvf3800_readbacks
 
   # Current upstream route control, but with real XVF3800 readback rather than
   # optimistic state. channel 0 -> STT; channel 1 -> micro_wake_word.
@@ -232,7 +235,7 @@ select:
     name: "DSP route"
     icon: mdi:call-split
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     options:
       - "ASR to STT and wake word"
       - "Comms to STT, ASR to wake word"
@@ -240,13 +243,14 @@ select:
     set_action:
       - lambda: |-
           id(respeaker).set_asr_route(x == "ASR to STT and wake word");
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_dt_sensitive
     name: "XVF3800 Double-Talk Sensitivity"
     icon: mdi:account-voice
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     options:
       - "0"
       - "1"
@@ -265,6 +269,7 @@ select:
       - lambda: |-
           const int32_t value = x.size() == 2 ? 10 + (x[1] - '0') : x[0] - '0';
           id(respeaker).set_pp_dt_sensitive(value);
+      - script.execute: refresh_xvf3800_readbacks
 
 
 number:
@@ -275,7 +280,7 @@ number:
     name: "XVF3800 ASR Output Gain"
     icon: mdi:amplifier
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 8
     step: 0.1
@@ -283,13 +288,14 @@ number:
     lambda: return id(respeaker).get_aec_asr_output_gain();
     set_action:
       - lambda: id(respeaker).set_aec_asr_output_gain(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: audio_mgr_mic_gain
     name: "XVF3800 Microphone Gain"
     icon: mdi:microphone-plus
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 1
     max_value: 200
     step: 1
@@ -297,13 +303,14 @@ number:
     lambda: return id(respeaker).get_audio_mgr_mic_gain();
     set_action:
       - lambda: id(respeaker).set_audio_mgr_mic_gain(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: audio_mgr_ref_gain
     name: "XVF3800 Reference Gain"
     icon: mdi:volume-plus
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0.1
     max_value: 32
     step: 0.1
@@ -311,13 +318,14 @@ number:
     lambda: return id(respeaker).get_audio_mgr_ref_gain();
     set_action:
       - lambda: id(respeaker).set_audio_mgr_ref_gain(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: audio_mgr_sys_delay
     name: "XVF3800 System Delay"
     icon: mdi:timer-sand
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: -64
     max_value: 256
     step: 1
@@ -326,13 +334,14 @@ number:
     lambda: return id(respeaker).get_audio_mgr_sys_delay();
     set_action:
       - lambda: id(respeaker).set_audio_mgr_sys_delay((int32_t) x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: aec_far_ext_gain
     name: "XVF3800 Far-End External Gain"
     icon: mdi:volume-high
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: -30
     max_value: 30
     step: 0.5
@@ -341,6 +350,7 @@ number:
     lambda: return id(respeaker).get_aec_far_ext_gain();
     set_action:
       - lambda: id(respeaker).set_aec_far_ext_gain(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   # Missing upstream #62 control for the comms/STT path. This does not change
   # the ASR wake-word channel, but keeps the fork functionally current.
@@ -349,7 +359,7 @@ number:
     name: "AGC max gain (comms)"
     icon: mdi:auto-fix
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 1
     max_value: 1000
     step: 1
@@ -357,6 +367,7 @@ number:
     lambda: return id(respeaker).get_pp_agc_max_gain();
     set_action:
       - lambda: id(respeaker).set_pp_agc_max_gain(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   # PP_MGSCALE is one atomic (max,min,current) tuple in XMOS. The component
   # performs read-modify-write and preserves whether current was max or min.
@@ -365,7 +376,7 @@ number:
     name: "XVF3800 MGSCALE Max"
     icon: mdi:tune-vertical
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 1
     max_value: 100000
     step: 1
@@ -373,13 +384,14 @@ number:
     lambda: return id(respeaker).get_pp_mgscale_max();
     set_action:
       - lambda: id(respeaker).set_pp_mgscale_max(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_mgscale_min
     name: "XVF3800 MGSCALE Min"
     icon: mdi:tune-vertical
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 100000
     step: 0.05
@@ -387,13 +399,14 @@ number:
     lambda: return id(respeaker).get_pp_mgscale_min();
     set_action:
       - lambda: id(respeaker).set_pp_mgscale_min(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_min_ns
     name: "XVF3800 Stationary Noise Gain Floor"
     icon: mdi:waveform
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 1
     step: 0.01
@@ -401,13 +414,14 @@ number:
     lambda: return id(respeaker).get_pp_min_ns();
     set_action:
       - lambda: id(respeaker).set_pp_min_ns(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_min_nn
     name: "XVF3800 Non-Stationary Noise Gain Floor"
     icon: mdi:waveform
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 1
     step: 0.01
@@ -415,13 +429,14 @@ number:
     lambda: return id(respeaker).get_pp_min_nn();
     set_action:
       - lambda: id(respeaker).set_pp_min_nn(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_gamma_e
     name: "XVF3800 Echo Gamma E"
     icon: mdi:sine-wave
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 2
     step: 0.1
@@ -429,13 +444,14 @@ number:
     lambda: return id(respeaker).get_pp_gamma_e();
     set_action:
       - lambda: id(respeaker).set_pp_gamma_e(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_gamma_etail
     name: "XVF3800 Echo Gamma E Tail"
     icon: mdi:sine-wave
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 2
     step: 0.1
@@ -443,13 +459,14 @@ number:
     lambda: return id(respeaker).get_pp_gamma_etail();
     set_action:
       - lambda: id(respeaker).set_pp_gamma_etail(x);
+      - script.execute: refresh_xvf3800_readbacks
 
   - platform: template
     id: pp_gamma_enl
     name: "XVF3800 Echo Gamma ENL"
     icon: mdi:sine-wave
     entity_category: config
-    update_interval: 5s
+    update_interval: never
     min_value: 0
     max_value: 5
     step: 0.1
@@ -457,6 +474,7 @@ number:
     lambda: return id(respeaker).get_pp_gamma_enl();
     set_action:
       - lambda: id(respeaker).set_pp_gamma_enl(x);
+      - script.execute: refresh_xvf3800_readbacks
 
 
 binary_sensor:
@@ -481,25 +499,79 @@ binary_sensor:
 
 sensor:
   - platform: template
+    id: pp_mgscale_current
     name: "XVF3800 MGSCALE Current"
     icon: mdi:tune-vertical
     entity_category: diagnostic
-    update_interval: 5s
+    update_interval: never
     accuracy_decimals: 3
     lambda: return id(respeaker).get_pp_mgscale_current();
 
 
 text_sensor:
   - platform: template
+    id: audio_mgr_output_left
     name: "XVF3800 Output Left"
     icon: mdi:audio-input-stereo-minijack
     entity_category: diagnostic
-    update_interval: 5s
+    update_interval: never
     lambda: return id(respeaker).get_audio_mgr_op_l();
 
   - platform: template
+    id: audio_mgr_output_right
     name: "XVF3800 Output Right"
     icon: mdi:audio-input-stereo-minijack
     entity_category: diagnostic
-    update_interval: 5s
+    update_interval: never
     lambda: return id(respeaker).get_audio_mgr_op_r();
+
+# Publish static XVF3800 readbacks only when they are useful:
+# once after boot, after a tuning change, or when manually requested.
+# This prevents ESPHome's API state subscriber from flooding saved logs with
+# identical [S][number/select/sensor/text_sensor] lines every five seconds.
+button:
+  - platform: template
+    id: refresh_xvf3800_readbacks_button
+    name: "Refresh XVF3800 Readbacks"
+    icon: mdi:refresh
+    entity_category: diagnostic
+    on_press:
+      - script.execute: refresh_xvf3800_readbacks
+
+script:
+  - id: refresh_xvf3800_readbacks
+    mode: restart
+    then:
+      # The XVF3800 component continuously refreshes its internal register cache.
+      # After a write, give that poller enough time to read the new value back.
+      # mode: restart also coalesces rapid slider changes into one publish burst.
+      - delay: 750ms
+      - component.update: dfu_version_sensor
+      - component.update: aec_hpf_mode
+      - component.update: aec_emphasis_mode
+      - component.update: dsp_route
+      - component.update: pp_dt_sensitive
+      - component.update: aec_asr_output_gain
+      - component.update: audio_mgr_mic_gain
+      - component.update: audio_mgr_ref_gain
+      - component.update: audio_mgr_sys_delay
+      - component.update: aec_far_ext_gain
+      - component.update: pp_agc_max_gain
+      - component.update: pp_mgscale_max
+      - component.update: pp_mgscale_min
+      - component.update: pp_min_ns
+      - component.update: pp_min_nn
+      - component.update: pp_gamma_e
+      - component.update: pp_gamma_etail
+      - component.update: pp_gamma_enl
+      - component.update: pp_mgscale_current
+      - component.update: audio_mgr_output_left
+      - component.update: audio_mgr_output_right
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        # Wait until the XVF3800 version read and diagnostic cache have settled.
+        - delay: 5s
+        - script.execute: refresh_xvf3800_readbacks
